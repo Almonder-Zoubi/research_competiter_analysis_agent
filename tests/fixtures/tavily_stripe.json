@@ -1,0 +1,23 @@
+{
+  "query": "Stripe company overview",
+  "results": [
+    {
+      "url": "https://stripe.com/about",
+      "title": "About Stripe",
+      "content": "Stripe is a financial infrastructure platform for businesses. Millions of companies use Stripe to accept payments, grow revenue, and run internet businesses.",
+      "score": 0.91
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Stripe,_Inc.",
+      "title": "Stripe, Inc. - Wikipedia",
+      "content": "Stripe, Inc. is an Irish-American financial services and software as a service company. Stripe was founded in 2010 by Irish brothers John Collison and Patrick Collison.",
+      "score": 0.87
+    },
+    {
+      "url": "https://www.crunchbase.com/organization/stripe",
+      "title": "Stripe - Crunchbase Company Profile",
+      "content": "Stripe has raised a total of $8.7B in funding over 20 rounds. Their latest funding was raised on Mar 14, 2023 from a Series I round.",
+      "score": 0.83
+    }
+  ]
+}

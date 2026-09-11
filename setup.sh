@@ -27,6 +27,10 @@ python -m pip install --quiet --upgrade pip
 python -m pip install --quiet -r requirements.txt
 echo "   Dependencies installed."
 
+echo "==> Installing project in editable mode (for the research-agent command)..."
+python -m pip install --quiet -e . --no-deps
+echo "   Done."
+
 echo "==> Setting up .env..."
 if [ ! -f ".env" ]; then
   cp .env.example .env

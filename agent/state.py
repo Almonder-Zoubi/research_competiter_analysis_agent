@@ -20,6 +20,8 @@ class RunState:
     facts: list[Fact] = field(default_factory=list)
     brief: str | None = None
 
+    run_id: int | None = None
+
     steps_used: int = 0
     sources_used: int = 0
 

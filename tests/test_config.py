@@ -6,13 +6,15 @@ the same way on a fresh clone as they do here.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
 from agent.config import Settings
 
 
-def make_settings(**overrides: object) -> Settings:
+def make_settings(**overrides: Any) -> Settings:
     return Settings(
         _env_file=None,  # type: ignore[call-arg]
         anthropic_api_key="test-key",

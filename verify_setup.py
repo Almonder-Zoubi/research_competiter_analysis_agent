@@ -65,7 +65,10 @@ def check_anthropic() -> bool:
         ok(f"Anthropic key works — test call to {model} succeeded")
         return True
     except Exception as e:  # noqa: BLE001 - we want to surface any failure
-        fail(f"Anthropic call failed: {e}", "check the key, and that billing/credits are set up")
+        fail(
+            f"Anthropic call failed: {e}",
+            "check the key, and that billing/credits are set up",
+        )
         return False
 
 

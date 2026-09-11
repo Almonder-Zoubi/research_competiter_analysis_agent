@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "research-competitor-analysis-agent"
+version = "0.1.0"
+description = "Research / competitor-analysis agent with sourced, cross-checked briefs."
+requires-python = ">=3.11"
+
+# Dependencies are managed via requirements.txt + setup.sh (see CLAUDE.md's stack
+# list) — this file exists to register the research-agent console script.
+[project.scripts]
+research-agent = "cli:main"
+
+[tool.setuptools]
+py-modules = ["cli"]
+packages = ["agent", "tools", "memory"]
+
+[tool.ruff.lint.per-file-ignores]
+# This check runs *before* we know the user's interpreter satisfies requires-python
+# above — the version guard is the point, not dead code.
+"verify_setup.py" = ["UP036"]
+
+[tool.mypy]
+warn_unused_ignores = true
+
+# tavily-python ships no py.typed marker / stubs.
+[[tool.mypy.overrides]]
+module = "tavily.*"
+ignore_missing_imports = true
