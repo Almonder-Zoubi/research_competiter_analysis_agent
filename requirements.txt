@@ -1,0 +1,25 @@
+# --- Agent core ---
+anthropic>=0.40.0          # Claude API client (the agent's brain)
+tavily-python>=0.5.0       # web search API (free tier: 1,000 credits/mo)
+pydantic>=2.0              # typed schemas for all structured I/O
+pydantic-settings>=2.0     # load config/keys from .env
+
+# --- Tools ---
+httpx>=0.27               # HTTP client for fetching pages
+trafilatura>=1.8          # clean HTML -> readable text extraction
+
+# --- Storage ---
+sqlalchemy>=2.0           # ORM over SQLite (swap to Postgres later, same code)
+
+# --- Observability & logging ---
+structlog>=24.0           # structured logging
+langfuse>=2.0             # LLM tracing (hosted free tier; self-host optional)
+
+# --- Dashboard ---
+streamlit>=1.38           # local web dashboard, pure Python
+
+# --- Dev tooling ---
+python-dotenv>=1.0        # .env loading for scripts
+pytest>=8.0               # tests
+ruff>=0.6                 # linter + formatter
+mypy>=1.11                # static type checking
