@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     run_timeout_seconds: int = Field(default=300, gt=0)
 
     database_url: str = "sqlite:///data/research.db"
+    reports_dir: str = "reports"  # where --deep-research PDFs land; gitignored
 
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None

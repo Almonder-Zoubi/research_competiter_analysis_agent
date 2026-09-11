@@ -11,7 +11,7 @@ from typing import Any
 from tavily.errors import BadRequestError, InvalidAPIKeyError, UsageLimitExceededError
 
 from tools.base import ToolErrorCategory
-from tools.search import SearchInput, SearchTool
+from tools.search import EXCLUDED_DOMAINS, SearchInput, SearchTool
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "tavily_stripe.json"
 
@@ -90,3 +90,20 @@ def test_malformed_response_maps_to_validation() -> None:
 
     assert result.ok is False
     assert result.error_category == ToolErrorCategory.VALIDATION
+
+
+def test_excludes_low_signal_domains() -> None:
+    captured: dict[str, Any] = {}
+
+    class _CapturingClient:
+        def search(
+            self, query: str, max_results: int | None = None, **kwargs: Any
+        ) -> dict[str, Any]:
+            captured["kwargs"] = kwargs
+            return {"results": []}
+
+    tool = SearchTool(client=_CapturingClient())
+    tool.run(SearchInput(query="Stripe"))
+
+    assert captured["kwargs"]["exclude_domains"] == EXCLUDED_DOMAINS
+    assert "youtube.com" in EXCLUDED_DOMAINS

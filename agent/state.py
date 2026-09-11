@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from agent.schemas import Fact, Source
+from agent.schemas import DeepResearchReport, Fact, Source
 
 
 @dataclass
@@ -19,6 +19,11 @@ class RunState:
     sources: list[Source] = field(default_factory=list)
     facts: list[Fact] = field(default_factory=list)
     brief: str | None = None
+
+    # --deep-research only:
+    subject_type: str | None = None
+    deep_report: DeepResearchReport | None = None
+    report_path: str | None = None
 
     run_id: int | None = None
 

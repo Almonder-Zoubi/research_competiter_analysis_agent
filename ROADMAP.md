@@ -26,19 +26,22 @@ company and traces every step beats an ambitious half-broken one.
 ### Day 1 — Skeleton & rails  ✅ (done)
 Repo, config, Pydantic schemas, RunState, first ORM table, tests green. $0.
 
-### Days 2–3 — Walking skeleton  ← CURRENT
+### Days 2–3 — Walking skeleton  ✅ (done)
 One command produces a crude sourced brief end to end: plan → 1 search → store →
 1 LLM call → store → print. Tool base with error categories, search tool tested
 offline, DB round-trip tested offline, then ONE deliberate real run.
 Detailed spec: DAYS_2_3_walking_skeleton.md
-This is the critical milestone. After it, everything is improvement not risk.
+Closed 2026-09-11: `research-agent run --company "Stripe"` ran live end to end
+(run #3 — 8 sources, 1066-char brief, all stored). Tests/ruff/mypy stayed green
+through the live run.
 
-### Days 4–5 — Harden the tools
+### Days 4–5 — Harden the tools  ← CURRENT
 Real multi-query search. Fetch tool (httpx + trafilatura) with retries, timeouts,
 robots-awareness, HTML→text cleaning. Structured extraction tool: text → Fact
 objects, validated against Pydantic with one repair retry. Full error-handling
 layer + budget guards enforced everywhere. Circuit breaker so one bad tool doesn't
 kill a run. This is where most engineering-maturity signal lives.
+Detailed spec: DAYS_4_5_harden_tools.md
 
 ### Days 6–7 — Verification (the headline feature)
 Cross-check / reconcile facts across sources: group by attribute, agreement →

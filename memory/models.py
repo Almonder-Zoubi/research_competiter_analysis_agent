@@ -27,6 +27,7 @@ class RunORM(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     topic: Mapped[str] = mapped_column(String, nullable=False)
     brief: Mapped[str | None] = mapped_column(Text, default=None)
+    report_path: Mapped[str | None] = mapped_column(String, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )

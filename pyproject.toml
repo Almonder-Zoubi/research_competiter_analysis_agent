@@ -29,3 +29,8 @@ warn_unused_ignores = true
 [[tool.mypy.overrides]]
 module = "tavily.*"
 ignore_missing_imports = true
+
+# reportlab ships no py.typed marker / stubs.
+[[tool.mypy.overrides]]
+module = "reportlab.*"
+ignore_missing_imports = true

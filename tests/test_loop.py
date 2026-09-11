@@ -13,7 +13,8 @@ from types import SimpleNamespace
 from typing import Any
 
 from agent.config import Settings
-from agent.loop import run_research
+from agent.loop import run_deep_research, run_research
+from agent.planner import make_search_queries
 from memory.db import make_engine, make_session_factory
 from memory.repository import load_run
 from tools.search import SearchTool
@@ -58,6 +59,30 @@ def _session_factory(tmp_path: Path):
     return make_session_factory(engine)
 
 
+def _planner_reply(*queries: str) -> str:
+    """The loop now asks the model to plan queries too (agent/planner.py), so
+    every fake Anthropic client here needs one reply for that call before the
+    brief-synthesis reply."""
+    return json.dumps({"queries": list(queries)})
+
+
+def _deep_planner_reply(subject_type: str, *queries: str) -> str:
+    return json.dumps({"subject_type": subject_type, "queries": list(queries)})
+
+
+def _deep_report_reply(topic: str, *headings: str) -> str:
+    return json.dumps(
+        {
+            "topic": topic,
+            "subject_type": "company",
+            "sections": [
+                {"heading": h, "content": f"{h} content.", "source_urls": []}
+                for h in headings
+            ],
+        }
+    )
+
+
 def test_run_research_end_to_end_offline(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
     search_tool = SearchTool(
@@ -84,7 +109,12 @@ def test_run_research_end_to_end_offline(tmp_path: Path) -> None:
     reply = json.dumps(
         {"topic": "Acme", "summary": "Acme makes widgets and raised $10M."}
     )
-    anthropic_client = _FakeAnthropicClient([reply])
+    anthropic_client = _FakeAnthropicClient(
+        [
+            _planner_reply("Acme company overview", "Acme funding", "Acme founders"),
+            reply,
+        ]
+    )
 
     state = run_research(
         "Acme",
@@ -110,7 +140,9 @@ def test_run_research_stops_at_max_steps(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
     search_tool = SearchTool(client=_FakeTavilyClient({}))
     reply = json.dumps({"topic": "Acme", "summary": "No sources were found."})
-    anthropic_client = _FakeAnthropicClient([reply])
+    anthropic_client = _FakeAnthropicClient(
+        [_planner_reply("Acme company overview"), reply]
+    )
 
     state = run_research(
         "Acme",
@@ -141,7 +173,9 @@ def test_run_research_repairs_invalid_brief_json_once(tmp_path: Path) -> None:
     )
     bad_reply = "Sure, here's a summary: Acme makes widgets."
     good_reply = json.dumps({"topic": "Acme", "summary": "Acme makes widgets."})
-    anthropic_client = _FakeAnthropicClient([bad_reply, good_reply])
+    anthropic_client = _FakeAnthropicClient(
+        [_planner_reply("Acme company overview"), bad_reply, good_reply]
+    )
 
     state = run_research(
         "Acme",
@@ -169,7 +203,9 @@ def test_run_research_gives_up_after_one_failed_repair(tmp_path: Path) -> None:
             }
         )
     )
-    anthropic_client = _FakeAnthropicClient(["not json", "still not json"])
+    anthropic_client = _FakeAnthropicClient(
+        [_planner_reply("Acme company overview"), "not json", "still not json"]
+    )
 
     state = run_research(
         "Acme",
@@ -181,3 +217,159 @@ def test_run_research_gives_up_after_one_failed_repair(tmp_path: Path) -> None:
 
     assert state.brief is not None
     assert "could not synthesize" in state.brief.lower()
+
+
+def test_run_research_falls_back_to_template_plan_if_planner_fails(
+    tmp_path: Path,
+) -> None:
+    session_factory = _session_factory(tmp_path)
+    search_tool = SearchTool(
+        client=_FakeTavilyClient(
+            {
+                "Acme overview": [
+                    {
+                        "url": "https://acme.example/about",
+                        "title": "About Acme",
+                        "content": "Acme makes widgets.",
+                    }
+                ]
+            }
+        )
+    )
+    brief_reply = json.dumps({"topic": "Acme", "summary": "Acme makes widgets."})
+    # Both planner attempts return invalid JSON; the loop must still complete
+    # using the deterministic fallback template, not crash.
+    anthropic_client = _FakeAnthropicClient(["not json", "still not json", brief_reply])
+
+    state = run_research(
+        "Acme",
+        settings=_settings(),
+        anthropic_client=anthropic_client,  # type: ignore[arg-type]
+        search_tool=search_tool,
+        session_factory=session_factory,
+    )
+
+    assert state.plan == make_search_queries("Acme")
+    assert state.brief == "Acme makes widgets."
+
+
+def test_run_deep_research_end_to_end_offline(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    search_tool = SearchTool(
+        client=_FakeTavilyClient(
+            {
+                "Acme overview": [
+                    {
+                        "url": "https://acme.example/about",
+                        "title": "About Acme",
+                        "content": "Acme makes widgets.",
+                    }
+                ],
+                "Acme ownership": [
+                    {
+                        "url": "https://acme.example/ownership",
+                        "title": "Ownership",
+                        "content": "Acme is privately held.",
+                    }
+                ],
+                "Acme controversies": [],
+            }
+        )
+    )
+    anthropic_client = _FakeAnthropicClient(
+        [
+            _deep_planner_reply(
+                "company", "Acme overview", "Acme ownership", "Acme controversies"
+            ),
+            _deep_report_reply(
+                "Acme", "Origin & History", "Controversies & Legal Issues"
+            ),
+        ]
+    )
+
+    state = run_deep_research(
+        "Acme",
+        settings=_settings(reports_dir=str(tmp_path / "reports")),
+        anthropic_client=anthropic_client,  # type: ignore[arg-type]
+        search_tool=search_tool,
+        session_factory=session_factory,
+    )
+
+    assert state.run_id is not None
+    assert state.subject_type == "company"
+    assert state.deep_report is not None
+    assert len(state.deep_report.sections) == 2
+    assert state.sources_used == 2
+
+    assert state.report_path is not None
+    report_file = Path(state.report_path)
+    assert report_file.exists()
+    assert report_file.read_bytes()[:4] == b"%PDF"
+
+    with session_factory() as session:
+        record = load_run(session, state.run_id)
+    assert record is not None
+    assert record.report_path == state.report_path
+
+
+def test_run_deep_research_stops_at_max_steps(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    search_tool = SearchTool(client=_FakeTavilyClient({}))
+    anthropic_client = _FakeAnthropicClient(
+        [
+            _deep_planner_reply(
+                "general", "Acme overview", "Acme history", "Acme people"
+            ),
+            _deep_report_reply("Acme", "Note"),
+        ]
+    )
+
+    state = run_deep_research(
+        "Acme",
+        settings=_settings(max_steps=1, reports_dir=str(tmp_path / "reports")),
+        anthropic_client=anthropic_client,  # type: ignore[arg-type]
+        search_tool=search_tool,
+        session_factory=session_factory,
+    )
+
+    assert state.steps_used == 1
+    assert state.sources_used == 0
+
+
+def test_run_deep_research_falls_back_when_synthesis_fails(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    search_tool = SearchTool(
+        client=_FakeTavilyClient(
+            {
+                "Acme overview": [
+                    {
+                        "url": "https://acme.example/about",
+                        "title": "About Acme",
+                        "content": "Acme makes widgets.",
+                    }
+                ]
+            }
+        )
+    )
+    anthropic_client = _FakeAnthropicClient(
+        [
+            _deep_planner_reply(
+                "company", "Acme overview", "Acme ownership", "Acme controversies"
+            ),
+            "not json",
+            "still not json",
+        ]
+    )
+
+    state = run_deep_research(
+        "Acme",
+        settings=_settings(reports_dir=str(tmp_path / "reports")),
+        anthropic_client=anthropic_client,  # type: ignore[arg-type]
+        search_tool=search_tool,
+        session_factory=session_factory,
+    )
+
+    assert state.deep_report is not None
+    assert state.deep_report.sections[0].heading == "Note"
+    assert state.report_path is not None
+    assert Path(state.report_path).exists()

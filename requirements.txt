@@ -18,6 +18,10 @@ langfuse>=2.0             # LLM tracing (hosted free tier; self-host optional)
 # --- Dashboard ---
 streamlit>=1.38           # local web dashboard, pure Python
 
+# --- Reporting ---
+reportlab>=4.0            # PDF rendering for --deep-research (pure Python, no
+                           # system deps like libcairo/pango)
+
 # --- Dev tooling ---
 python-dotenv>=1.0        # .env loading for scripts
 pytest>=8.0               # tests

@@ -5,6 +5,9 @@
 data/
 *.db
 
+# Deep-research PDF output
+reports/
+
 # Python
 .venv/
 __pycache__/

@@ -7,6 +7,7 @@ reconciliation, conflict flags) get added once the verify/ step exists.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -47,6 +48,64 @@ class RunRecord(BaseModel):
     id: int
     topic: str
     brief: str | None
+    report_path: str | None = None
     created_at: datetime
     sources: list[Source] = Field(default_factory=list)
     facts: list[Fact] = Field(default_factory=list)
+
+
+class SearchPlan(BaseModel):
+    """Validated output of the LLM-driven planner — a handful of targeted queries."""
+
+    queries: list[str] = Field(min_length=1, max_length=5)
+
+
+class RunSummary(BaseModel):
+    """One row for listing runs — counts only, no sources/facts loaded."""
+
+    id: int
+    topic: str
+    created_at: datetime
+    has_brief: bool
+    has_report: bool = False
+    source_count: int
+    fact_count: int
+
+
+SubjectType = Literal["company", "field", "initiative", "general"]
+
+
+class DeepResearchPlan(BaseModel):
+    """Validated output of the deep-research query planner (agent/deep_research.py).
+
+    Unlike SearchPlan, this also names the subject type — deep-mode synthesis
+    needs it a second time (to pick section headings), so we ask the model to
+    classify once here and reuse the answer rather than risk an inconsistent
+    second classification.
+    """
+
+    subject_type: SubjectType
+    queries: list[str] = Field(min_length=3, max_length=8)
+
+
+class ReportSection(BaseModel):
+    """One section of a deep-research report: a heading, a few sentences of
+    prose, and the source URLs (from among the run's fetched sources) that
+    back it."""
+
+    heading: str
+    content: str
+    source_urls: list[str] = Field(default_factory=list)
+
+
+class DeepResearchReport(BaseModel):
+    """The synthesized deep-research report for one run — validated LLM output.
+
+    subject_type is a plain str here (not the planner's Literal) because the
+    no-sources/total-failure fallback in agent/deep_research.py needs to build
+    one without depending on the planner call having succeeded.
+    """
+
+    topic: str
+    subject_type: str
+    sections: list[ReportSection] = Field(min_length=1)

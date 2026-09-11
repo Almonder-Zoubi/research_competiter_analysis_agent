@@ -22,6 +22,27 @@ class SearchInput(BaseModel):
     max_results: int = Field(default=5, gt=0)
 
 
+# Domains that are rarely useful as citable sources for factual research — video
+# and social platforms return content that isn't extractable article text, and
+# aren't authoritative. This is a first-pass filter, not a full source-quality
+# system: deeper credibility weighting (official site > major outlet > blog) is
+# verification's job once corroboration across sources exists (ROADMAP.md Days
+# 6-7's "source-quality heuristic"). Kept as a blocklist rather than an
+# allowlist because research subjects vary too widely (a company vs. an
+# engineering field) for any fixed list of "good" domains to fit both.
+EXCLUDED_DOMAINS = [
+    "youtube.com",
+    "tiktok.com",
+    "facebook.com",
+    "instagram.com",
+    "twitter.com",
+    "x.com",
+    "reddit.com",
+    "pinterest.com",
+    "quora.com",
+]
+
+
 class _TavilyClientLike(Protocol):
     """The slice of TavilyClient this tool depends on — lets tests inject a fake."""
 
@@ -39,7 +60,9 @@ class SearchTool(Tool[list[Source]]):
     def run(self, input: SearchInput) -> ToolResult[list[Source]]:  # type: ignore[override]
         try:
             response = self._client.search(
-                query=input.query, max_results=input.max_results
+                query=input.query,
+                max_results=input.max_results,
+                exclude_domains=EXCLUDED_DOMAINS,
             )
         except (
             InvalidAPIKeyError,

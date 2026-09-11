@@ -43,6 +43,8 @@ Hand-rolled loop (NOT LangGraph/CrewAI — I want to own the control flow for in
 - **trafilatura + httpx** — page fetching/cleaning for non-Tavily fetches.
 - **Pydantic** — all structured I/O and config.
 - **SQLAlchemy + SQLite** — storage. File-based, zero-config, `git clone` and run.
+- **reportlab** — PDF rendering for `--deep-research` reports. Pure Python, no
+  system deps.
 - **Langfuse** — LLM tracing (hosted free tier; optional, degrades gracefully if keys
   are absent).
 - **Streamlit** — dashboard (pure Python). A FastAPI + React frontend is an explicit
@@ -79,8 +81,9 @@ Hand-rolled loop (NOT LangGraph/CrewAI — I want to own the control flow for in
 - **PROGRESS.md** — live status. At the END of each work session, update the "Now"
   section, check off completed items, and add any decision to the decision log.
   Keep it short.
-- **DAYS_2_3_walking_skeleton.md** (and later per-milestone specs) — the turn-by-turn
-  build spec for the current milestone.
+- **DAYS_4_5_harden_tools.md** (current) and **DAYS_2_3_walking_skeleton.md**
+  (previous, done) — turn-by-turn build specs per milestone. Each new milestone
+  gets its own spec file; check PROGRESS.md for which one is current.
 
 At the start of a session, read PROGRESS.md to see where things stand. At the end,
 update it. This keeps every session (and any reviewer) oriented without re-briefing.

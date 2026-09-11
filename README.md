@@ -55,10 +55,12 @@ progress). Current state:
 | SQL persistence layer — models, engine, repository (`memory/`) | ✅ Done (sources + brief; fact storage wired, not yet populated) |
 | Thin end-to-end loop + planner (`agent/loop.py`, `agent/planner.py`) | ✅ Done — walking skeleton |
 | CLI entrypoint — `research-agent run --company "<name>"` (`cli.py`) | ✅ Done |
+| LLM-driven planner, subject-aware (`agent/planner.py`) | ✅ Done — company vs. engineering/research field vs. company-initiative; falls back to a fixed template on model failure |
+| Source-quality filter — excludes video/social domains (`tools/search.py`) | ✅ Done (first pass — a blocklist, not full credibility scoring) |
+| `--deep-research` mode — structured multi-section PDF report (`agent/deep_research.py`, `agent/report.py`) | ✅ Done — confirmed live on a real scandal case (Wirecard); see PROGRESS.md for a JSON-truncation bug it surfaced and how it was fixed |
 | Fetch tool (standalone page fetch/clean, beyond Tavily's) | 🔜 Not started |
 | Fact extraction (atomic `attribute/value/source` triples) | 🔜 Not started |
 | Verification / cross-checking (`verify/`) | 🔜 Not started |
-| LLM-driven planner (current planner is a hardcoded template) | 🔜 Not started |
 | Streamlit dashboard | 🔜 Not started (Phase 2: FastAPI + React, only after core works) |
 
 The goal after each milestone is a working **walking skeleton** end to end — it's
@@ -81,6 +83,7 @@ Chosen to be free or near-free to run:
 | Page fetching/cleaning | `httpx` + `trafilatura` | For non-Tavily fetches, strips boilerplate down to readable text |
 | Structured I/O | Pydantic | Every LLM output that should be structured is validated against a model, with one repair retry on invalid output |
 | Storage | SQLAlchemy + SQLite | File-based, zero-config, `git clone` and run |
+| PDF reports | [reportlab](https://www.reportlab.com/opensource/) | Pure Python, no system deps (unlike weasyprint's libcairo/pango) — used only by `--deep-research` |
 | Tracing | [Langfuse](https://langfuse.com) | Hosted free tier; optional — degrades gracefully if keys are absent |
 | Dashboard | Streamlit | Pure Python; a FastAPI + React frontend is an explicit Phase 2 |
 
@@ -133,16 +136,58 @@ Claude Code VS Code extension.
 research-agent run --company "Stripe"
 ```
 
-This runs the full loop against real Tavily + Anthropic calls: plans a few search
-queries, searches, stores the sources it finds, asks Claude for a short brief
-grounded in that text, stores the brief, and prints both the brief and where it
-landed in the database. Expect roughly one Tavily credit and a few cents of Claude
-usage per run — the walking-skeleton brief is a short summary paragraph, not yet
-the fully cited claim-by-claim brief described above.
+This runs the full loop against real Tavily + Anthropic calls: asks Claude (Haiku)
+to plan a few search queries suited to the subject, searches, stores the sources
+it finds, asks Claude (Sonnet) for a short brief grounded in that text, stores the
+brief, and prints both the brief and where it landed in the database. Works for
+companies ("Stripe"), engineering/research fields ("harness engineering"), or a
+specific initiative inside a larger company ("Mercedes-Benz Tech Innovation") —
+the planner adapts its query strategy to which kind of subject it is. Expect
+roughly one Tavily credit per query and a few cents of Claude usage per run (one
+cheap Haiku call for planning, one Sonnet call for the brief) — the walking-
+skeleton brief is a short summary paragraph, not yet the fully cited claim-by-claim
+brief described above.
 
 `setup.sh` installs the project in editable mode so the `research-agent` command is
 available once the venv is active; equivalently, `python cli.py run --company "..."`
 works without that install step.
+
+### Deep research mode
+
+```bash
+research-agent run --company "Wirecard" --deep-research
+```
+
+The default brief is deliberately thin (one paragraph) — `--deep-research` is for
+when that's not enough. It runs 5-6 targeted searches instead of 2-3 generic ones
+(including an explicit controversies/scandal search — a plain "company overview"
+query won't surface those), and synthesizes a structured, multi-section report
+instead of a paragraph: for a company, origin & history, ownership, financials,
+products, scale, and controversies & legal issues (stated as "none found" rather
+than invented, if the sources don't support one); for an engineering/research
+field or a company-initiative, an analogous but different section set. The report
+is rendered to a PDF under `reports/` (gitignored, like `data/`) and its path is
+stored on the run — `research-agent show --run-id N` prints it.
+
+This costs meaningfully more than the default: roughly 5-6 Tavily credits and
+**~4-9¢ of Claude usage** (vs. ~1¢ for the default), driven by the larger
+synthesis call reading up to 15 sources at once. Still cents, not dollars — but
+worth knowing before running it repeatedly. See PROGRESS.md for the full cost
+breakdown and a real bug this mode surfaced (a data-rich topic can truncate the
+synthesis call's JSON output; fixed by raising `max_tokens` and having the model
+avoid literal quotes in its output).
+
+### Recalling past research
+
+Every run is persisted, so past research doesn't require another live call to see
+again:
+
+```bash
+research-agent list             # every run: id, topic, when, source/fact counts, has a brief?
+research-agent show --run-id 3  # full detail for one run: brief, every source url, every fact
+```
+
+Both read straight from the local SQLite file — no network calls, no cost.
 
 ## Configuration
 
@@ -159,6 +204,7 @@ Budget guards are enforced by the control loop so a run can never spiral in cost
 | `MAX_SOURCES` | `15` | Hard cap on pages fetched per run |
 | `RUN_TIMEOUT_SECONDS` | `300` | Wall-clock cap per run |
 | `DATABASE_URL` | `sqlite:///data/research.db` | SQLAlchemy connection string |
+| `REPORTS_DIR` | `reports` | Where `--deep-research` PDFs land (gitignored) |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | *(optional)* | Enables LLM tracing when set |
 
 ## Project structure
@@ -168,16 +214,25 @@ agent/
   config.py     # Settings loaded from .env, with budget guards
   schemas.py    # Source, Fact, Brief, RunRecord — the shared Pydantic models
   state.py      # RunState — working memory threaded through the control loop
-  planner.py    # topic -> a handful of search queries (template for now)
-  loop.py       # the control loop: plan -> search -> store -> synthesize -> store
+  planner.py    # topic -> search queries; MODEL_FAST picks a strategy per subject
+                # type (company / engineering field / company-initiative), falls
+                # back to a fixed template on model failure
+  llm.py        # shared validate + repair-retry helper for structured LLM output
+                # (used by planner.py, loop.py's brief synthesis, and deep_research.py)
+  deep_research.py # --deep-research query planning + multi-section report synthesis
+  report.py     # renders a DeepResearchReport to PDF (reportlab, no LLM/network)
+  loop.py       # the control loop: plan -> search -> store -> synthesize -> store;
+                # also run_deep_research(), the --deep-research sibling
 tools/
   base.py       # Tool contract: ToolResult, error categories (transient/permanent/validation)
-  search.py     # SearchTool, wrapping the Tavily client
+  search.py     # SearchTool, wrapping the Tavily client; excludes a small
+                # blocklist of video/social domains (EXCLUDED_DOMAINS)
 memory/
   models.py     # SQLAlchemy ORM: runs, sources, facts
-  db.py         # engine/session setup
+  db.py         # engine/session setup; patches in columns added to an existing
+                # table (create_all() only creates missing tables, not columns)
   repository.py # converts between ORM rows and the Pydantic schemas
-cli.py          # `research-agent run --company "<name>"`
+cli.py          # research-agent run [--deep-research] / list / show
 tests/
   test_config.py
   test_state.py
@@ -185,23 +240,30 @@ tests/
   test_search.py
   test_repository.py
   test_loop.py
+  test_deep_research.py
+  test_report.py
+  test_db.py
   fixtures/     # saved API responses used instead of live network calls
 data/
   research.db   # SQLite fact store (local; see note below on git tracking)
+reports/
+  *.pdf         # --deep-research output (local, gitignored)
 verify_setup.py # Day 0 environment check (real but tiny API calls)
 setup.sh        # venv + deps + .env scaffold + editable install
 pyproject.toml  # registers the research-agent console script; ruff/mypy config
 env.example     # template for .env — safe to commit, no real secrets
 CLAUDE.md       # project context read automatically by Claude Code
 DAY0_SETUP.md   # detailed first-time setup walkthrough
-DAYS_2_3_walking_skeleton.md # build spec for this milestone
+ROADMAP.md      # whole-project milestone map
+PROGRESS.md     # live status — read at the start of a session, update at the end
+DAYS_2_3_walking_skeleton.md # build spec — done
+DAYS_4_5_harden_tools.md     # build spec — current milestone
 ```
 
-> **Note:** `.gitignore` excludes `data/` and `*.db`, but `data/research.db` was
-> committed before that rule was added, so it's still tracked. Running the CLI
-> writes to it, which will show up as changes to a tracked binary file. Worth
-> untracking (`git rm --cached data/research.db`) next time you're touching git
-> config — not done here since it wasn't asked for.
+> **Note:** `data/research.db` was committed once, before the `.gitignore` rule
+> for `data/` existed. It was untracked (`git rm --cached`) in the same commit
+> that added the rule, so the local file now grows freely as the CLI runs
+> without showing up in `git status`.
 
 ## Development
 
