@@ -72,3 +72,15 @@ Hand-rolled loop (NOT LangGraph/CrewAI — I want to own the control flow for in
   the walking skeleton is broken.
 - If a change would add a new paid dependency or a heavyweight framework, flag it first.
 - Prefer the smallest change that moves the current milestone forward.
+
+## Planning docs in this repo (read these)
+
+- **ROADMAP.md** — the whole project arc, all milestones through end of project.
+- **PROGRESS.md** — live status. At the END of each work session, update the "Now"
+  section, check off completed items, and add any decision to the decision log.
+  Keep it short.
+- **DAYS_2_3_walking_skeleton.md** (and later per-milestone specs) — the turn-by-turn
+  build spec for the current milestone.
+
+At the start of a session, read PROGRESS.md to see where things stand. At the end,
+update it. This keeps every session (and any reviewer) oriented without re-briefing.
