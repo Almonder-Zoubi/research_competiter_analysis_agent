@@ -48,7 +48,7 @@ progress). Current state:
 | Piece | Status |
 |---|---|
 | Config, secrets loading, budget guards (`agent/config.py`) | ✅ Done |
-| Core schemas — `Source`, `Fact`, `Brief`, `RunRecord` (`agent/schemas.py`) | ✅ Done |
+| Core schemas — `Source`, `Fact`, `Conflict`, `VerifiedBrief`, `RunRecord` (`agent/schemas.py`) | ✅ Done |
 | `RunState` working memory (`agent/state.py`) | ✅ Done |
 | Uniform tool contract — `ToolResult`, error categories (`tools/base.py`) | ✅ Done |
 | Search tool, wrapping Tavily (`tools/search.py`) | ✅ Done |
@@ -61,17 +61,19 @@ progress). Current state:
 | Fetch tool (standalone page fetch/clean, beyond Tavily's) (`tools/fetch.py`) | ✅ Done — httpx + trafilatura, robots-aware, retries on transient failures |
 | Fact extraction (atomic `attribute/value/source` triples) (`tools/extract.py`) | ✅ Done — MODEL_FAST, validated + one repair retry; confirmed live (run #7: 60 facts extracted from 9 sources) |
 | Circuit breaker (stops a run after repeated consecutive tool failures) | ✅ Done — `RunState.record_tool_failure`, shared across search/fetch/extract |
-| Verification / cross-checking (`verify/`) | 🔜 Not started |
+| Verification / cross-checking (`verify/reconcile.py`) | ✅ Done — corroboration across independent domains raises confidence, disagreement is flagged as a `Conflict`; confirmed live (run #9: 7 real conflicts found in 61 facts, confidence spread 0.3–1.0) |
+| Cited, per-claim brief (`agent/cited_brief.py`, `verify/grounding.py`) | ✅ Done — every claim cites its exact source; ungrounded claims are dropped in code, not just prompted against |
+| Langfuse tracing | 🔜 Not started |
 | Streamlit dashboard | 🔜 Not started (Phase 2: FastAPI + React, only after core works) |
 
 The goal after each milestone is a working **walking skeleton** end to end — it's
-never left in a broken half-built state for long. As of Days 4-5, `research-agent
+never left in a broken half-built state for long. As of Days 6-7, `research-agent
 run --company "<name>"` runs the full `plan → search → fetch (if thin) → extract
-facts → store → synthesize → store` path against real Tavily + Anthropic calls,
-persisting atomic facts (not just raw source text) alongside a sourced (if still
-crude) brief. The brief itself is still one prose paragraph — the fully cited,
-per-claim brief that's the project's headline feature lands once `verify/` exists
-(Days 6-7).
+facts → reconcile (confidence, conflicts) → store → synthesize a cited brief →
+store` path against real Tavily + Anthropic calls. The brief is no longer one
+ungrounded paragraph — it's one claim per reconciled fact, each citing its exact
+source, with any conflicting facts across sources printed alongside it instead of
+silently picked between.
 
 ## Tech stack
 
@@ -214,17 +216,21 @@ Budget guards are enforced by the control loop so a run can never spiral in cost
 ```
 agent/
   config.py     # Settings loaded from .env, with budget guards
-  schemas.py    # Source, Fact, Brief, RunRecord — the shared Pydantic models
+  schemas.py    # Source, Fact, Conflict, CitedClaim, VerifiedBrief, RunRecord —
+                # the shared Pydantic models
   state.py      # RunState — working memory threaded through the control loop
   planner.py    # topic -> search queries; MODEL_FAST picks a strategy per subject
                 # type (company / engineering field / company-initiative), falls
                 # back to a fixed template on model failure
   llm.py        # shared validate + repair-retry helper for structured LLM output
-                # (used by planner.py, loop.py's brief synthesis, and deep_research.py)
+                # (used by planner.py, cited_brief.py, and deep_research.py)
+  cited_brief.py   # reconciled facts -> one cited claim per fact (verification's
+                   # brief-synthesis half); None-on-failure, loop.py owns fallbacks
   deep_research.py # --deep-research query planning + multi-section report synthesis
   report.py     # renders a DeepResearchReport to PDF (reportlab, no LLM/network)
   loop.py       # the control loop: plan -> search -> fetch (if thin) -> extract
-                # -> store -> synthesize -> store; also run_deep_research()
+                # -> reconcile -> store -> synthesize a cited brief -> store;
+                # also run_deep_research()
 tools/
   base.py       # Tool contract: ToolResult, error categories (transient/permanent/validation)
   search.py     # SearchTool, wrapping the Tavily client; excludes a small
@@ -232,7 +238,12 @@ tools/
   fetch.py      # FetchTool: httpx + trafilatura direct page fetch, backfills
                 # thin Tavily content; robots.txt checked via the same
                 # injectable client so it stays offline-testable
-  extract.py    # ExtractTool: MODEL_FAST -> validated list[Fact] per source
+  extract.py    # ExtractTool: MODEL_FAST -> validated list[Fact] per source,
+                # using a soft canonical attribute vocabulary
+verify/
+  reconcile.py  # pure, $0: groups facts by attribute, corroboration across
+                # independent domains raises confidence, disagreement -> Conflict
+  grounding.py  # pure, $0: drops any brief claim citing a source it wasn't given
 memory/
   models.py     # SQLAlchemy ORM: runs, sources, facts
   db.py         # engine/session setup; patches in columns added to an existing
@@ -246,6 +257,9 @@ tests/
   test_search.py
   test_fetch.py
   test_extract.py
+  test_reconcile.py
+  test_grounding.py
+  test_cited_brief.py
   test_repository.py
   test_loop.py
   test_deep_research.py
@@ -266,6 +280,7 @@ ROADMAP.md      # whole-project milestone map
 PROGRESS.md     # live status — read at the start of a session, update at the end
 DAYS_2_3_walking_skeleton.md # build spec — done
 DAYS_4_5_harden_tools.md     # build spec — done
+DAYS_6_7_verification.md     # build spec — done
 ```
 
 > **Note:** `data/research.db` was committed once, before the `.gitignore` rule
@@ -280,7 +295,7 @@ source .venv/bin/activate
 
 pytest                                              # run the test suite (all offline — no live network calls)
 ruff check . && ruff format --check .               # lint + format check
-mypy agent tools memory cli.py tests conftest.py verify_setup.py  # type check
+mypy agent tools memory verify cli.py tests conftest.py verify_setup.py  # type check
 ```
 
 ### Ground rules (enforced throughout)

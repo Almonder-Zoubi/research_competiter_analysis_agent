@@ -16,11 +16,13 @@ from tavily import TavilyClient
 
 from agent.config import get_settings
 from agent.loop import run_deep_research, run_research
+from agent.schemas import Conflict
 from memory.db import make_engine, make_session_factory
 from memory.repository import list_runs, load_run
 from tools.extract import ExtractTool
 from tools.fetch import FetchTool
 from tools.search import SearchTool
+from verify.reconcile import reconcile_facts
 
 logger = structlog.get_logger()
 
@@ -114,6 +116,7 @@ def _run_command(company: str, *, deep_research: bool) -> int:
     else:
         print(f"\n=== Brief: {state.topic} ===\n")
         print(state.brief)
+        _print_conflicts(state.conflicts)
 
     print(
         f"\n(run #{state.run_id} stored in {settings.database_url} — "
@@ -183,7 +186,22 @@ def _show_command(run_id: int) -> int:
             f"- {fact.attribute}: {fact.value} "
             f"(source: {fact.source_url}, confidence: {fact.confidence})"
         )
+
+    # Recomputed on the fly rather than persisted — reconcile_facts is pure
+    # and idempotent, so this reproduces the same conflicts the run itself
+    # found, without a DB migration to store them separately.
+    _, conflicts = reconcile_facts(record.facts)
+    _print_conflicts(conflicts)
     return 0
+
+
+def _print_conflicts(conflicts: list[Conflict]) -> None:
+    if not conflicts:
+        return
+    print(f"\n⚠ {len(conflicts)} conflicting fact(s) found:")
+    for conflict in conflicts:
+        values = "; ".join(f"{v.value} ({v.source_url})" for v in conflict.values)
+        print(f"  - {conflict.attribute}: {values}")
 
 
 if __name__ == "__main__":

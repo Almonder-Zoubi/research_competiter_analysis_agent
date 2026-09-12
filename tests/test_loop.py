@@ -105,6 +105,18 @@ def _extract_reply(*facts: tuple[str, str]) -> str:
     return json.dumps({"facts": [{"attribute": a, "value": v} for a, v in facts]})
 
 
+def _cited_brief_reply(topic: str, *claims: tuple[str, str]) -> str:
+    """Brief synthesis now asks for one cited claim per reconciled fact
+    (agent/cited_brief.py) instead of one free-text summary paragraph — each
+    claim is a (claim text, source_url) pair."""
+    return json.dumps(
+        {
+            "topic": topic,
+            "claims": [{"claim": c, "source_url": u} for c, u in claims],
+        }
+    )
+
+
 def _deep_planner_reply(subject_type: str, *queries: str) -> str:
     return json.dumps({"subject_type": subject_type, "queries": list(queries)})
 
@@ -145,15 +157,17 @@ def test_run_research_end_to_end_offline(tmp_path: Path) -> None:
             }
         )
     )
-    reply = json.dumps(
-        {"topic": "Acme", "summary": "Acme makes widgets and raised $10M."}
+    brief_reply = _cited_brief_reply(
+        "Acme",
+        ("Acme makes widgets.", "https://acme.example/about"),
+        ("Acme raised $10M in funding.", "https://acme.example/funding"),
     )
     anthropic_client = _FakeAnthropicClient(
         [
             _planner_reply("Acme company overview", "Acme funding", "Acme founders"),
             _extract_reply(("product", "widgets")),  # for the "about" source
             _extract_reply(("funding_total", "$10M")),  # for the "funding" source
-            reply,
+            brief_reply,
         ]
     )
 
@@ -168,12 +182,18 @@ def test_run_research_end_to_end_offline(tmp_path: Path) -> None:
     )
 
     assert state.run_id is not None
-    assert state.brief == "Acme makes widgets and raised $10M."
+    assert state.brief == (
+        "Acme makes widgets. [https://acme.example/about]\n"
+        "Acme raised $10M in funding. [https://acme.example/funding]"
+    )
     assert state.sources_used == 2
     # 3 search steps + (1 backfill fetch + 1 extract) per thin source x2:
     assert state.steps_used == 7
     assert len(state.facts) == 2
     assert {f.attribute for f in state.facts} == {"product", "funding_total"}
+    # different attributes, one source each -> no conflict, baseline confidence
+    assert state.conflicts == []
+    assert all(f.confidence == 0.6 for f in state.facts)
 
     with session_factory() as session:
         record = load_run(session, state.run_id)
@@ -207,6 +227,7 @@ def test_run_research_stops_at_max_steps(tmp_path: Path) -> None:
 
 def test_run_research_repairs_invalid_brief_json_once(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
+    long_content = "Acme makes enterprise widgets. " * 10  # skip fetch backfill
     search_tool = SearchTool(
         client=_FakeTavilyClient(
             {
@@ -214,21 +235,28 @@ def test_run_research_repairs_invalid_brief_json_once(tmp_path: Path) -> None:
                     {
                         "url": "https://acme.example/about",
                         "title": "About Acme",
-                        "content": "Acme makes widgets.",
+                        "content": long_content,
                     }
                 ]
             }
         )
     )
-    bad_reply = "Sure, here's a summary: Acme makes widgets."
-    good_reply = json.dumps({"topic": "Acme", "summary": "Acme makes widgets."})
+    bad_reply = "Sure, here's a brief: Acme makes widgets."
+    good_reply = _cited_brief_reply(
+        "Acme", ("Acme makes widgets.", "https://acme.example/about")
+    )
     anthropic_client = _FakeAnthropicClient(
-        [_planner_reply("Acme company overview"), bad_reply, good_reply]
+        [
+            _planner_reply("Acme company overview"),
+            _extract_reply(("product", "widgets")),
+            bad_reply,
+            good_reply,
+        ]
     )
 
     state = run_research(
         "Acme",
-        settings=_settings(max_steps=1),
+        settings=_settings(max_steps=2),  # 1 search step + 1 extract step
         anthropic_client=anthropic_client,  # type: ignore[arg-type]
         search_tool=search_tool,
         fetch_tool=FetchTool(client=_NeverCalledHttpClient()),
@@ -236,11 +264,12 @@ def test_run_research_repairs_invalid_brief_json_once(tmp_path: Path) -> None:
         session_factory=session_factory,
     )
 
-    assert state.brief == "Acme makes widgets."
+    assert state.brief == "Acme makes widgets. [https://acme.example/about]"
 
 
 def test_run_research_gives_up_after_one_failed_repair(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
+    long_content = "Acme makes enterprise widgets. " * 10  # skip fetch backfill
     search_tool = SearchTool(
         client=_FakeTavilyClient(
             {
@@ -248,19 +277,24 @@ def test_run_research_gives_up_after_one_failed_repair(tmp_path: Path) -> None:
                     {
                         "url": "https://acme.example/about",
                         "title": "About Acme",
-                        "content": "Acme makes widgets.",
+                        "content": long_content,
                     }
                 ]
             }
         )
     )
     anthropic_client = _FakeAnthropicClient(
-        [_planner_reply("Acme company overview"), "not json", "still not json"]
+        [
+            _planner_reply("Acme company overview"),
+            _extract_reply(("product", "widgets")),
+            "not json",
+            "still not json",
+        ]
     )
 
     state = run_research(
         "Acme",
-        settings=_settings(max_steps=1),
+        settings=_settings(max_steps=2),  # 1 search step + 1 extract step
         anthropic_client=anthropic_client,  # type: ignore[arg-type]
         search_tool=search_tool,
         fetch_tool=FetchTool(client=_NeverCalledHttpClient()),
@@ -289,11 +323,18 @@ def test_run_research_falls_back_to_template_plan_if_planner_fails(
             }
         )
     )
-    brief_reply = json.dumps({"topic": "Acme", "summary": "Acme makes widgets."})
+    brief_reply = _cited_brief_reply(
+        "Acme", ("Acme makes widgets.", "https://acme.example/about")
+    )
     # Both planner attempts return invalid JSON; the loop must still complete
     # using the deterministic fallback template, not crash.
     anthropic_client = _FakeAnthropicClient(
-        ["not json", "still not json", _extract_reply(), brief_reply]
+        [
+            "not json",
+            "still not json",
+            _extract_reply(("product", "widgets")),
+            brief_reply,
+        ]
     )
 
     state = run_research(
@@ -307,7 +348,7 @@ def test_run_research_falls_back_to_template_plan_if_planner_fails(
     )
 
     assert state.plan == make_search_queries("Acme")
-    assert state.brief == "Acme makes widgets."
+    assert state.brief == "Acme makes widgets. [https://acme.example/about]"
 
 
 def test_run_research_skips_backfill_when_content_is_already_long_enough(
@@ -328,7 +369,9 @@ def test_run_research_skips_backfill_when_content_is_already_long_enough(
             }
         )
     )
-    brief_reply = json.dumps({"topic": "Acme", "summary": "Acme makes widgets."})
+    brief_reply = _cited_brief_reply(
+        "Acme", ("Acme makes widgets.", "https://acme.example/about")
+    )
     anthropic_client = _FakeAnthropicClient(
         [
             _planner_reply("Acme company overview"),
@@ -374,13 +417,14 @@ def test_run_research_circuit_breaker_stops_extraction_after_repeated_failures(
             }
         )
     )
-    brief_reply = json.dumps({"topic": "Acme", "summary": "Acme makes widgets."})
     # Every extraction attempt returns invalid JSON — 2 replies consumed per
     # source (initial + one repair retry, see agent/llm.py) — but the circuit
     # breaker should trip after 3 consecutive failed sources and skip the 4th
-    # entirely, so only 3 sources' worth of bad replies are ever needed.
+    # entirely, so only 3 sources' worth of bad replies are ever needed. No
+    # brief reply is queued: with zero facts extracted, brief synthesis
+    # short-circuits without calling the model at all.
     anthropic_client = _FakeAnthropicClient(
-        [_planner_reply(*queries)] + ["not json", "still not json"] * 3 + [brief_reply]
+        [_planner_reply(*queries)] + ["not json", "still not json"] * 3
     )
 
     state = run_research(
@@ -394,10 +438,14 @@ def test_run_research_circuit_breaker_stops_extraction_after_repeated_failures(
     )
 
     assert state.facts == []
-    assert state.brief == "Acme makes widgets."
-    # planner(1) + 3 sources x 2 extraction attempts + brief(1) = 8 — the 4th
-    # source's extraction was never attempted once the breaker tripped.
-    assert len(anthropic_client.messages.calls) == 8
+    assert (
+        state.brief
+        == "No verifiable facts were found for 'Acme' — nothing to summarize."
+    )
+    # planner(1) + 3 sources x 2 extraction attempts = 7 — the 4th source's
+    # extraction was never attempted once the breaker tripped, and brief
+    # synthesis never touched the model since there were no facts to cite.
+    assert len(anthropic_client.messages.calls) == 7
 
 
 def test_run_deep_research_end_to_end_offline(tmp_path: Path) -> None:

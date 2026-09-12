@@ -30,18 +30,6 @@ class Fact(BaseModel):
     confidence: float = 1.0
 
 
-class Brief(BaseModel):
-    """The synthesized research brief for one run — validated LLM output.
-
-    Kept intentionally small for the Day 2-3 walking skeleton: a single summary
-    paragraph, not yet the fully cited, claim-by-claim brief that's the project's
-    headline feature (that lands once verify/ exists).
-    """
-
-    topic: str
-    summary: str
-
-
 class RunRecord(BaseModel):
     """A run as read back from the DB — what the dashboard/CLI load() returns."""
 
@@ -109,3 +97,37 @@ class DeepResearchReport(BaseModel):
     topic: str
     subject_type: str
     sections: list[ReportSection] = Field(min_length=1)
+
+
+class ConflictingValue(BaseModel):
+    """One of the differing values seen for an attribute during reconciliation
+    (verify/reconcile.py), with the source it came from."""
+
+    value: str
+    source_url: str
+
+
+class Conflict(BaseModel):
+    """Sources disagree on this attribute's value — surfaced to the user
+    instead of silently picking one (see CLAUDE.md's headline feature:
+    verification)."""
+
+    attribute: str
+    values: list[ConflictingValue] = Field(min_length=2)
+
+
+class CitedClaim(BaseModel):
+    """One sentence of a brief, grounded in exactly one source — the atomic
+    unit the project's headline metric (% of brief claims grounded in a cited
+    source) is measured against."""
+
+    claim: str
+    source_url: str
+
+
+class VerifiedBrief(BaseModel):
+    """Validated LLM output from agent/cited_brief.py: a brief expressed as
+    one cited claim per reconciled fact, instead of one ungrounded paragraph."""
+
+    topic: str
+    claims: list[CitedClaim] = Field(min_length=1)

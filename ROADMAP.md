@@ -46,13 +46,22 @@ Closed 2026-09-12: `research-agent run --company "Notion"` ran live end to end
 (run #7 — 9 sources, 60 extracted facts across all of them, brief synthesized,
 all stored). 74 tests (19 new), ruff + mypy green through the live run.
 
-### Days 6–7 — Verification (the headline feature)  ← CURRENT
+### Days 6–7 — Verification (the headline feature)  ✅ (done)
 Cross-check / reconcile facts across sources: group by attribute, agreement →
 higher confidence, disagreement → recorded conflict. Confidence = corroborating
 independent sources × source-quality heuristic. Then synthesize a properly cited
 brief where every claim carries a source. Make verification visible in output.
+Detailed spec: DAYS_6_7_verification.md
+Closed 2026-09-12: new `verify/` package (`reconcile.py`, `grounding.py`),
+`agent/cited_brief.py` replacing raw-text brief synthesis, conflicts surfaced
+in both `run` and `show`. Confirmed live on Figma (run #9) — 18 grounded
+cited claims, 7 real conflicts (differing founding years, funding rounds,
+valuations over time, the Adobe acquisition), confidence spread 0.3–1.0
+across 61 facts. A first attempt (run #8) found a real truncation bug
+(`max_tokens` too low), same root cause as the earlier Wirecard bug at a
+different call site — fixed and reconfirmed. 92 tests, ruff + mypy green.
 
-### Day 8 — Observability + dashboard
+### Day 8 — Observability + dashboard  ← CURRENT
 Wire Langfuse tracing on every loop step (plan, each tool call, each LLM call:
 tokens, cost, latency, decision). Streamlit dashboard: run list, brief view, facts
 table with confidence, conflicts, and run metrics.

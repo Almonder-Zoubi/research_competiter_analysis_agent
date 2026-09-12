@@ -10,19 +10,19 @@ Keep it short. This is a status board, not a diary.
 
 ## Now
 
-**Current milestone:** Days 6–7 — Verification (the headline feature). No spec
-  file written yet — next session should draft DAYS_6_7_verification.md before
-  coding, same pattern as prior milestones.
-**Next action:** Design the fact-reconciliation step: group `Fact` rows by
-  attribute (per run), decide a corroboration/conflict rule, and add a
-  confidence adjustment. Then rewrite brief synthesis to cite sources per claim
-  instead of one ungrounded paragraph.
+**Current milestone:** Day 8 — Observability (Langfuse) + Streamlit dashboard.
+  No spec file written yet — next session should draft one before coding,
+  same pattern as prior milestones.
+**Next action:** Wire Langfuse tracing on each loop step (plan, each tool
+  call, each LLM call: tokens, cost, latency, decision) — optional/graceful if
+  keys are absent, per config.py's existing langfuse_* fields. Then a
+  Streamlit dashboard: run list, brief view, facts table with confidence,
+  conflicts.
 **Blockers:** none. Anthropic account funded ($5) 2026-09-11.
-**Cost to date:** ~$0.30-0.35 spent through the deep-research diagnostic work
-  (see decision log), plus one more live run this session (`research-agent run
-  --company "Notion"`, run #7 — 9 sources, ~12 steps: light-mode routine cost,
-  well under 5¢) to prove Days 4-5's hardened path end to end. Routine run cost
-  is ~1-2¢ (light, now with extraction) / ~4-9¢ (deep).
+**Cost to date:** ~$0.30-0.35 through the deep-research diagnostic work (see
+  decision log), plus small routine runs since: Notion (run #7, Days 4-5
+  proof) and two Figma runs (#8-9, Days 6-7 proof — the first hit a real bug,
+  see below). All well under 5¢ each; still comfortably under $0.40 total.
 
 ---
 
@@ -55,6 +55,42 @@ Keep it short. This is a status board, not a diary.
       `research-agent run --company "Notion"` (run #7) — 9 sources, **60
       facts extracted and persisted** (the new capability this milestone
       exists for), brief synthesized, 12 steps used, still cents.
+- [x] Days 6–7 — verification, the project's headline feature (spec:
+      DAYS_6_7_verification.md). Built on a new `days-6-7-verification`
+      branch. Step 0: extraction prompt (`tools/extract.py`) now asks for a
+      soft canonical attribute vocabulary (founded_year, headquarters,
+      founders, etc.) so the same real-world fact groups together across
+      sources instead of fragmenting under free-text names. New `verify/`
+      package (pure, $0, no LLM/network calls, per CLAUDE.md's Conventions):
+      `verify/reconcile.py` groups facts by attribute, corroboration across
+      **distinct domains** (not just distinct URLs) raises confidence
+      (`0.6 + 0.2 per extra independent domain, capped at 1.0`), disagreement
+      emits a `Conflict` and halves confidence; `verify/grounding.py` drops
+      any brief claim citing a source it wasn't given. New
+      `agent/cited_brief.py` replaces raw-source-text brief synthesis: the
+      model gets the *reconciled* facts and writes one claim per fact,
+      citing its exact source — `RunRecord.brief` stays a plain string (no DB
+      migration), now rendered as one cited sentence per line. `RunState`
+      gains `conflicts`; CLI (`run` and `show`) prints them — `show`
+      recomputes them on the fly via the same pure, idempotent
+      `reconcile_facts` rather than persisting a second copy. 92 tests
+      passing (18 new), ruff + mypy green. **Real bug found and fixed via the
+      live proof run** (`research-agent run --company "Figma"`, run #8):
+      cited-brief synthesis failed both attempts — same root cause as the
+      earlier Wirecard bug (`max_tokens` too low for a fact-rich prompt,
+      confirmed by evidence already in hand — 57 facts extracted, 40 fed into
+      a 1200-token-capped call, each needing its own claim + full URL) at a
+      different call site. Fixed: `max_tokens` 1200 → 4000, `_MAX_FACTS`
+      40 → 25. **Confirmed live with a second run** (run #9, same company):
+      18 grounded cited claims and 7 real conflicts (differing founding
+      years, funding-round figures, valuations over time, the Adobe
+      acquisition), confidence spread 0.3/0.5/0.6/1.0 across 61 persisted
+      facts — exactly the designed formula. Two known limitations of the
+      reconciliation heuristic were also confirmed against this same real
+      data (not left hypothetical) and documented in `verify/reconcile.py`'s
+      docstring: exact-string value matching can't tell "$343.2M" agrees with
+      "343.2M", and naturally multi-valued attributes (e.g. two co-founders)
+      can get misread as a conflict.
 
 ## Done (ad hoc, outside milestone sequence)
 
@@ -108,17 +144,11 @@ Keep it short. This is a status board, not a diary.
 
 ## In progress
 
-- [ ] Days 6–7 — verification + cited synthesis (headline feature). No spec
-      file yet — write DAYS_6_7_verification.md first. Rough shape from
-      ROADMAP.md: group `Fact` rows by attribute per run, corroboration across
-      independent sources raises confidence, disagreement is recorded as a
-      conflict rather than silently dropped; then rewrite brief synthesis so
-      every claim in the output carries its source (the project's headline
-      metric: % of brief claims grounded in a cited source).
+- [ ] Day 8 — observability (Langfuse) + Streamlit dashboard. No spec file
+      yet — write one first, same pattern as prior milestones.
 
 ## Upcoming (see ROADMAP.md for detail)
 
-- [ ] Day 8 — observability (Langfuse) + Streamlit dashboard
 - [ ] Days 9–10 — evals + README/writeup (flagship polish)
 
 ## Decision log
@@ -199,3 +229,43 @@ Short record of choices, so they aren't relitigated.
   It's refreshing an existing source's content, not fetching a new one; only
   `can_take_step`/`can_fetch_source` gate whether the backfill is even
   attempted, per the spec.
+- Reconciliation counts **distinct domains**, not distinct URLs, as
+  independent corroborating sources — two pages on the same site aren't
+  independent (matches ROADMAP.md's own phrase, "corroborating independent
+  sources"). Confirmed via the Figma run: growjo.com and research.contrary.com
+  count as 2 independent sources; two Wikipedia pages would count as 1.
+- Reconciliation is deliberately naive (exact-normalized-string value
+  matching) rather than semantic — a real fix needs an LLM call or embedding
+  similarity, both real cost, both deferred. Confirmed two concrete failure
+  modes against real data rather than leaving this hypothetical: "$343.2
+  million" vs "343.2M" (Notion) don't match as agreeing, and two
+  legitimately-different co-founders under one "co-founder" attribute key
+  (Notion) get misread as a conflict. Documented in `verify/reconcile.py`'s
+  docstring rather than special-cased — a hardcoded multi-valued-attribute
+  exception list would only patch this one example.
+- `agent/cited_brief.py` returns `None` on failure (like `plan_search_queries`)
+  rather than always-non-None (like `synthesize_deep_report`) — the loop also
+  has to fold in the grounding-filter step in between a successful call and
+  the final text, and three distinct fallback messages (no facts / model
+  failed / every claim filtered as ungrounded) are easier to follow with one
+  owner (`agent/loop.py`) than split across internal-fallback layers.
+- `RunRecord.brief` stays a plain `str | None` even though brief synthesis now
+  produces structured, atomic `CitedClaim`s internally — no DB migration; the
+  rendered text (one cited sentence per line) is what gets persisted, same
+  pattern already used for `--deep-research` (the structured
+  `DeepResearchReport` itself is never persisted as JSON either, only the PDF
+  it renders to).
+- Conflicts aren't persisted to a new DB column — `show` recomputes them by
+  calling the same pure `reconcile_facts` again on the loaded facts, which is
+  safe because that function is idempotent by construction (confidence is
+  always recomputed from attribute/value/source_url, never read back from the
+  input). Verified for free against run #7's real 60-fact Notion data before
+  spending anything on this milestone's own live proof run.
+- Cited-brief truncation bug (2026-09-12, Figma run #8): same root cause as
+  the earlier Wirecard bug — `max_tokens` too low for a fact-rich prompt —
+  confirmed from evidence already in hand (57 facts extracted, 40 fed into a
+  1200-token-capped call each needing a claim + full URL) rather than a fresh
+  live diagnostic call, since the failure mode exactly matched a
+  previously-confirmed one. Fixed by raising `max_tokens` (1200 → 4000,
+  matching deep-research's confirmed-working value) and lowering `_MAX_FACTS`
+  (40 → 25) to shrink expected output as a second line of defense.

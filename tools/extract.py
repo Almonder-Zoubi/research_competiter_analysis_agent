@@ -23,14 +23,20 @@ from tools.base import Tool, ToolErrorCategory, ToolResult
 EXTRACT_SYSTEM_PROMPT = """\
 You are a fact-extraction assistant. Given the text of one web page about a \
 research subject, pull out a handful of atomic, factual claims explicitly \
-stated in the text — e.g. founding year, headquarters, founders, funding or \
-revenue figures, employee count, products, or ownership. Each fact is a short \
-attribute/value pair grounded only in this text; never infer or add outside \
-knowledge, and skip anything not clearly stated. If the text contains no \
-extractable facts, return an empty list.
+stated in the text. Each fact is a short attribute/value pair grounded only \
+in this text; never infer or add outside knowledge, and skip anything not \
+clearly stated. If the text contains no extractable facts, return an empty \
+list.
+
+Use one of these attribute names whenever a fact matches it, so the same \
+real-world fact is named consistently across different sources: \
+founded_year, headquarters, founders, ceo, employee_count, funding_total, \
+latest_funding_round, valuation, revenue, ownership, products, industry, \
+controversies. If a fact doesn't fit any of these, use a short descriptive \
+attribute name of your own.
 
 Respond with ONLY valid JSON matching this schema, no other text:
-{"facts": [{"attribute": "<short attribute name>", "value": "<value>"}]}"""
+{"facts": [{"attribute": "<attribute name>", "value": "<value>"}]}"""
 
 _SCHEMA_HINT = '{"facts": [{"attribute": "...", "value": "..."}]}'
 _SOURCE_CHARS = 4000
