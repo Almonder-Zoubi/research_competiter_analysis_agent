@@ -10,6 +10,7 @@ it doesn't pull its weight) delete as one unit.
 from __future__ import annotations
 
 from anthropic import Anthropic
+from langfuse import observe
 
 from agent.llm import call_for_structured_output
 from agent.schemas import DeepResearchPlan, DeepResearchReport, ReportSection, Source
@@ -112,6 +113,7 @@ def make_deep_research_queries(topic: str) -> DeepResearchPlan:
     )
 
 
+@observe(name="plan_deep_research_queries")
 def plan_deep_research_queries(
     topic: str, *, client: Anthropic, model: str
 ) -> DeepResearchPlan:
@@ -129,6 +131,7 @@ def plan_deep_research_queries(
     return plan
 
 
+@observe(name="synthesize_deep_report")
 def synthesize_deep_report(
     client: Anthropic,
     model: str,

@@ -24,6 +24,7 @@ from pathlib import Path
 
 import structlog
 from anthropic import Anthropic
+from langfuse import get_client, observe
 from sqlalchemy.orm import sessionmaker
 
 from agent.cited_brief import render_brief_text, synthesize_cited_brief
@@ -52,6 +53,7 @@ logger = structlog.get_logger()
 _THIN_CONTENT_CHARS = 200
 
 
+@observe(name="run_research", capture_input=False, capture_output=False)
 def run_research(
     topic: str,
     *,
@@ -62,6 +64,11 @@ def run_research(
     extract_tool: ExtractTool,
     session_factory: sessionmaker,
 ) -> RunState:
+    # Input/output captured explicitly (topic, then the rendered brief) rather
+    # than via @observe's default arg/return capture — several args here
+    # (settings, the tools, session_factory) aren't meaningfully serializable
+    # and aren't what anyone reading a trace wants to see anyway.
+    get_client().update_current_span(input=topic)
     state = RunState(topic=topic)
 
     with session_factory() as session:
@@ -90,9 +97,11 @@ def run_research(
     with session_factory() as session:
         save_brief(session, state.run_id, state.brief)
 
+    get_client().update_current_span(output=state.brief)
     return state
 
 
+@observe(name="run_deep_research", capture_input=False, capture_output=False)
 def run_deep_research(
     topic: str,
     *,
@@ -107,6 +116,7 @@ def run_deep_research(
     prose paragraph. See DAYS_4_5_harden_tools.md and PROGRESS.md for the cost
     delta versus the default run.
     """
+    get_client().update_current_span(input=topic)
     state = RunState(topic=topic)
 
     with session_factory() as session:
@@ -142,6 +152,7 @@ def run_deep_research(
     with session_factory() as session:
         save_report_path(session, state.run_id, state.report_path)
 
+    get_client().update_current_span(output=state.report_path)
     return state
 
 

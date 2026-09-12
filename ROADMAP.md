@@ -61,12 +61,25 @@ across 61 facts. A first attempt (run #8) found a real truncation bug
 (`max_tokens` too low), same root cause as the earlier Wirecard bug at a
 different call site — fixed and reconfirmed. 92 tests, ruff + mypy green.
 
-### Day 8 — Observability + dashboard  ← CURRENT
+### Day 8 — Observability + dashboard  ✅ (done)
 Wire Langfuse tracing on every loop step (plan, each tool call, each LLM call:
 tokens, cost, latency, decision). Streamlit dashboard: run list, brief view, facts
 table with confidence, conflicts, and run metrics.
+Detailed spec: DAY_8_observability_dashboard.md
+Closed 2026-09-12: both built. Tracing via `@observe()` decorators (found the
+installed langfuse SDK is 4.x/OpenTelemetry-based, not the 2.x the old pin
+assumed — re-pinned and wrote agent/tracing.py against the real API,
+confirmed empty-key construction is instant and safe); zero test-file
+changes needed since it's a no-op when disabled. Dashboard (`dashboard.py`)
+reads the same `memory.repository` functions the CLI does; tested offline
+via Streamlit's own `AppTest` harness plus one real `streamlit run` smoke
+test. Confirmed live: `research-agent run --company "Linear"` (run #10) with
+the dashboard server running — the new run appeared immediately, no
+restart; also surfaced 8 real conflicts. 95 tests, ruff + mypy green. Only
+open item: real Langfuse keys (needs the user to create a free account) to
+confirm actual trace export — not blocking.
 
-### Days 9–10 — Evals + polish (what makes it a flagship)
+### Days 9–10 — Evals + polish (what makes it a flagship)  ← CURRENT
 5–10 golden test cases. Metrics led by groundedness (every claim traces to a
 source?) and citation coverage, plus fact recall/precision and an LLM-as-judge for
 brief quality. Then the portfolio layer: README with architecture diagram, demo

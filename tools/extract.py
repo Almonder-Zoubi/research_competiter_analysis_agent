@@ -14,6 +14,7 @@ already given (same reasoning as _drop_hallucinated_urls in deep_research.py).
 from __future__ import annotations
 
 from anthropic import Anthropic, AnthropicError
+from langfuse import observe
 from pydantic import BaseModel, Field
 
 from agent.llm import call_for_structured_output
@@ -63,6 +64,7 @@ class ExtractTool(Tool[list[Fact]]):
         self._client = client
         self._model = model
 
+    @observe(name="extract", as_type="tool")
     def run(self, input: ExtractInput) -> ToolResult[list[Fact]]:  # type: ignore[override]
         if not input.source.content.strip():
             return ToolResult.success([])

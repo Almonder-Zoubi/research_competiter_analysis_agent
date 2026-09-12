@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from langfuse import observe
 from pydantic import BaseModel, Field
 from tavily.errors import (
     BadRequestError,
@@ -57,6 +58,7 @@ class SearchTool(Tool[list[Source]]):
     def __init__(self, client: _TavilyClientLike) -> None:
         self._client = client
 
+    @observe(name="search", as_type="tool")
     def run(self, input: SearchInput) -> ToolResult[list[Source]]:  # type: ignore[override]
         try:
             response = self._client.search(

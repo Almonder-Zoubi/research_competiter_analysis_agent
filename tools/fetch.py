@@ -15,6 +15,7 @@ from urllib.robotparser import RobotFileParser
 
 import httpx
 import trafilatura
+from langfuse import observe
 from pydantic import BaseModel
 
 from agent.schemas import Source
@@ -46,6 +47,7 @@ class FetchTool(Tool[Source]):
             follow_redirects=True,
         )
 
+    @observe(name="fetch", as_type="tool")
     def run(self, input: FetchInput) -> ToolResult[Source]:  # type: ignore[override]
         robots_failure = self._check_robots(input.url)
         if robots_failure is not None:

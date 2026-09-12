@@ -13,6 +13,7 @@ follow with one owner.
 from __future__ import annotations
 
 from anthropic import Anthropic
+from langfuse import observe
 
 from agent.llm import call_for_structured_output
 from agent.schemas import Fact, VerifiedBrief
@@ -44,6 +45,7 @@ _SCHEMA_HINT = '{"topic": "...", "claims": [{"claim": "...", "source_url": "..."
 _MAX_FACTS = 25
 
 
+@observe(name="synthesize_cited_brief")
 def synthesize_cited_brief(
     client: Anthropic, model: str, *, topic: str, facts: list[Fact]
 ) -> VerifiedBrief | None:

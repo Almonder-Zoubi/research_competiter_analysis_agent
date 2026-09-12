@@ -17,6 +17,7 @@ from tavily import TavilyClient
 from agent.config import get_settings
 from agent.loop import run_deep_research, run_research
 from agent.schemas import Conflict
+from agent.tracing import flush_tracing, init_tracing
 from memory.db import make_engine, make_session_factory
 from memory.repository import list_runs, load_run
 from tools.extract import ExtractTool
@@ -72,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _run_command(company: str, *, deep_research: bool) -> int:
     settings = get_settings()
+    init_tracing(settings)
     engine = make_engine(settings.database_url)
     session_factory = make_session_factory(engine)
     anthropic_client = Anthropic(api_key=settings.anthropic_api_key)
@@ -105,6 +107,8 @@ def _run_command(company: str, *, deep_research: bool) -> int:
             file=sys.stderr,
         )
         return 1
+    finally:
+        flush_tracing()
 
     if deep_research and state.deep_report is not None:
         print(f"\n=== Deep Research Report: {state.topic} ===\n")

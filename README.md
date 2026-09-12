@@ -63,8 +63,8 @@ progress). Current state:
 | Circuit breaker (stops a run after repeated consecutive tool failures) | ✅ Done — `RunState.record_tool_failure`, shared across search/fetch/extract |
 | Verification / cross-checking (`verify/reconcile.py`) | ✅ Done — corroboration across independent domains raises confidence, disagreement is flagged as a `Conflict`; confirmed live (run #9: 7 real conflicts found in 61 facts, confidence spread 0.3–1.0) |
 | Cited, per-claim brief (`agent/cited_brief.py`, `verify/grounding.py`) | ✅ Done — every claim cites its exact source; ungrounded claims are dropped in code, not just prompted against |
-| Langfuse tracing | 🔜 Not started |
-| Streamlit dashboard | 🔜 Not started (Phase 2: FastAPI + React, only after core works) |
+| Langfuse tracing (`agent/tracing.py`) | ✅ Done — `@observe()` on plan/tool/LLM-call/run steps; safe no-op without keys (no Langfuse account configured yet, so real trace export is unverified) |
+| Streamlit dashboard (`dashboard.py`) | ✅ Done — run list + run detail (brief, sources, facts w/ confidence, conflicts); tested offline via Streamlit's `AppTest` harness. FastAPI + React remains an explicit Phase 2, only after core works |
 
 The goal after each milestone is a working **walking skeleton** end to end — it's
 never left in a broken half-built state for long. As of Days 6-7, `research-agent
@@ -141,16 +141,17 @@ research-agent run --company "Stripe"
 ```
 
 This runs the full loop against real Tavily + Anthropic calls: asks Claude (Haiku)
-to plan a few search queries suited to the subject, searches, stores the sources
-it finds, asks Claude (Sonnet) for a short brief grounded in that text, stores the
-brief, and prints both the brief and where it landed in the database. Works for
-companies ("Stripe"), engineering/research fields ("harness engineering"), or a
-specific initiative inside a larger company ("Mercedes-Benz Tech Innovation") —
-the planner adapts its query strategy to which kind of subject it is. Expect
-roughly one Tavily credit per query and a few cents of Claude usage per run (one
-cheap Haiku call for planning, one Sonnet call for the brief) — the walking-
-skeleton brief is a short summary paragraph, not yet the fully cited claim-by-claim
-brief described above.
+to plan a few search queries suited to the subject, searches, backfills any thin
+result with a direct page fetch, extracts atomic facts from each source (Haiku),
+reconciles them (corroboration raises confidence, disagreement is flagged as a
+conflict — pure, $0), asks Claude (Sonnet) to write one cited claim per fact, and
+prints the brief (each line ending in its source URL) plus any conflicts found.
+Works for companies ("Stripe"), engineering/research fields ("harness
+engineering"), or a specific initiative inside a larger company ("Mercedes-Benz
+Tech Innovation") — the planner adapts its query strategy to which kind of subject
+it is. Expect roughly one Tavily credit per query and a couple of cents of Claude
+usage per run (one cheap Haiku call for planning, one Haiku call per source for
+extraction, one Sonnet call for the cited brief).
 
 `setup.sh` installs the project in editable mode so the `research-agent` command is
 available once the venv is active; equivalently, `python cli.py run --company "..."`
@@ -193,6 +194,24 @@ research-agent show --run-id 3  # full detail for one run: brief, every source u
 
 Both read straight from the local SQLite file — no network calls, no cost.
 
+### Dashboard
+
+```bash
+streamlit run dashboard.py
+```
+
+Browses the same data `list`/`show` print, in a web UI: a table of every run,
+and a run-detail view (brief, sources, a facts table with confidence, and any
+conflicts). Read-only, $0 — no LLM/network calls of its own.
+
+### Tracing (optional)
+
+Set `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` in `.env` (free tier at
+[cloud.langfuse.com](https://cloud.langfuse.com)) to get a full trace of each
+run — every plan/tool/LLM call, with tokens and latency — in the Langfuse UI.
+Without keys, tracing is a safe no-op: nothing is sent, nothing changes about
+how the CLI behaves or what it costs.
+
 ## Configuration
 
 All runtime config is loaded from `.env` via `agent/config.py` (`get_settings()`).
@@ -223,11 +242,13 @@ agent/
                 # type (company / engineering field / company-initiative), falls
                 # back to a fixed template on model failure
   llm.py        # shared validate + repair-retry helper for structured LLM output
-                # (used by planner.py, cited_brief.py, and deep_research.py)
+                # (used by planner.py, cited_brief.py, and deep_research.py);
+                # also the single choke point for LLM-call tracing (@observe)
   cited_brief.py   # reconciled facts -> one cited claim per fact (verification's
                    # brief-synthesis half); None-on-failure, loop.py owns fallbacks
   deep_research.py # --deep-research query planning + multi-section report synthesis
   report.py     # renders a DeepResearchReport to PDF (reportlab, no LLM/network)
+  tracing.py    # Langfuse setup (@observe-based); optional, no-op without keys
   loop.py       # the control loop: plan -> search -> fetch (if thin) -> extract
                 # -> reconcile -> store -> synthesize a cited brief -> store;
                 # also run_deep_research()
@@ -250,6 +271,7 @@ memory/
                 # table (create_all() only creates missing tables, not columns)
   repository.py # converts between ORM rows and the Pydantic schemas
 cli.py          # research-agent run [--deep-research] / list / show
+dashboard.py    # Streamlit dashboard: run list + run detail; `streamlit run dashboard.py`
 tests/
   test_config.py
   test_state.py
@@ -265,12 +287,14 @@ tests/
   test_deep_research.py
   test_report.py
   test_db.py
+  test_dashboard.py  # via streamlit.testing.v1.AppTest — no browser needed
   fixtures/     # saved API responses / HTML pages used instead of live network calls
 data/
   research.db   # SQLite fact store (local; see note below on git tracking)
 reports/
   *.pdf         # --deep-research output (local, gitignored)
 verify_setup.py # Day 0 environment check (real but tiny API calls)
+conftest.py     # pytest bootstrap — silences Langfuse's noisy log warnings in tests
 setup.sh        # venv + deps + .env scaffold + editable install
 pyproject.toml  # registers the research-agent console script; ruff/mypy config
 env.example     # template for .env — safe to commit, no real secrets
@@ -281,6 +305,7 @@ PROGRESS.md     # live status — read at the start of a session, update at the 
 DAYS_2_3_walking_skeleton.md # build spec — done
 DAYS_4_5_harden_tools.md     # build spec — done
 DAYS_6_7_verification.md     # build spec — done
+DAY_8_observability_dashboard.md # build spec — current milestone
 ```
 
 > **Note:** `data/research.db` was committed once, before the `.gitignore` rule
@@ -295,7 +320,7 @@ source .venv/bin/activate
 
 pytest                                              # run the test suite (all offline — no live network calls)
 ruff check . && ruff format --check .               # lint + format check
-mypy agent tools memory verify cli.py tests conftest.py verify_setup.py  # type check
+mypy agent tools memory verify cli.py dashboard.py tests conftest.py verify_setup.py  # type check
 ```
 
 ### Ground rules (enforced throughout)

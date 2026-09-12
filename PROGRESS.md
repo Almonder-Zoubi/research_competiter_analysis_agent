@@ -10,19 +10,23 @@ Keep it short. This is a status board, not a diary.
 
 ## Now
 
-**Current milestone:** Day 8 — Observability (Langfuse) + Streamlit dashboard.
-  No spec file written yet — next session should draft one before coding,
-  same pattern as prior milestones.
-**Next action:** Wire Langfuse tracing on each loop step (plan, each tool
-  call, each LLM call: tokens, cost, latency, decision) — optional/graceful if
-  keys are absent, per config.py's existing langfuse_* fields. Then a
-  Streamlit dashboard: run list, brief view, facts table with confidence,
-  conflicts.
+**Current milestone:** Day 8 — Observability (Langfuse) + Streamlit dashboard
+  (spec: DAY_8_observability_dashboard.md). Done, except one optional item.
+**Next action:** Days 9–10 — evals + README/writeup (see ROADMAP.md). No
+  spec file written yet. Separately, whenever the user sets up a free
+  Langfuse account and adds real keys to `.env`, confirm a trace actually
+  appears in the Langfuse UI — the code is ready but this can't be verified
+  without an account (not blocking; everything else about Day 8 is done).
 **Blockers:** none. Anthropic account funded ($5) 2026-09-11.
-**Cost to date:** ~$0.30-0.35 through the deep-research diagnostic work (see
-  decision log), plus small routine runs since: Notion (run #7, Days 4-5
-  proof) and two Figma runs (#8-9, Days 6-7 proof — the first hit a real bug,
-  see below). All well under 5¢ each; still comfortably under $0.40 total.
+**Cost to date:** ~$0.35-0.40 through the deep-research + cited-brief
+  diagnostic work (see decision log), plus small routine runs since: Notion
+  (run #7, Days 4-5 proof), two Figma runs (#8-9, Days 6-7 proof — the first
+  hit a real bug), and Linear (run #10, Day 8's dashboard-freshness proof).
+  All well under 5¢ each.
+**Standing instruction (2026-09-12):** Claude Code no longer commits or
+  pushes in this repo — the user reviews and commits everything themselves.
+  Work is left staged/unstaged; PROGRESS.md and other docs are still kept
+  current so the state is clear at a glance.
 
 ---
 
@@ -91,6 +95,43 @@ Keep it short. This is a status board, not a diary.
       docstring: exact-string value matching can't tell "$343.2M" agrees with
       "343.2M", and naturally multi-valued attributes (e.g. two co-founders)
       can get misread as a conflict.
+- [x] Day 8 — observability (Langfuse) + Streamlit dashboard (spec:
+      DAY_8_observability_dashboard.md). Found the installed `langfuse` SDK
+      is 4.x (OpenTelemetry-based `Langfuse(...)`/`@observe()`/`get_client()`)
+      — a completely different API from the `>=2.0` pin's 2.x
+      `client.trace()/span()` calls; re-pinned to `>=4.0` and confirmed the
+      real API by introspecting the installed package rather than coding
+      from memory. `agent/tracing.py` (new): `init_tracing`/`flush_tracing`,
+      called from `cli.py`. Traced via `@observe()` decorators on
+      `agent/llm.py::_call_once` (the one choke point every structured LLM
+      call goes through — covers all 5 callers with one change, including
+      token usage via `response.usage`), each tool's `run()`
+      (search/fetch/extract), the planner/deep-research/cited-brief
+      functions, and the run-level span in `agent/loop.py`. Deliberately NOT
+      added to `verify/reconcile.py` — preserves its stated "no LLM/network
+      calls" purity. Confirmed via direct testing that a disabled client
+      (no keys) is a transparent, sub-millisecond no-op safe with arbitrary
+      argument types — **zero test file changes were needed**, unlike every
+      prior milestone. Caught and fixed one real API-shape issue along the
+      way: `set_current_trace_io` looked right and worked, but is deprecated
+      in this SDK version; switched to the actual current API
+      (`update_current_span`). New `dashboard.py` (Streamlit): run list +
+      run detail (brief, sources, facts w/ confidence, conflicts recomputed
+      via the same pure `reconcile_facts` `show` already uses). Tested
+      offline via Streamlit's own `streamlit.testing.v1.AppTest` harness
+      (no browser needed) plus one real `streamlit run` + `curl` smoke test.
+      Also fixed a real, already-past-deadline Streamlit deprecation
+      (`use_container_width` → the `width` param now defaults to the same
+      behavior, so the fix was just removing the deprecated arg). 95 tests
+      passing (3 new), ruff + mypy green. **Confirmed live**: ran
+      `research-agent run --company "Linear"` (run #10) while `streamlit run
+      dashboard.py` was live — the new run appeared in the dashboard
+      immediately, no restart. Run #10 also surfaced 8 real conflicts
+      (founders, headquarters phrasing, employee count, funding total,
+      valuation, latest round) — a good demonstration case for the
+      dashboard's conflict view. Only remaining item: real Langfuse keys
+      (needs the user to set up a free account) to confirm actual trace
+      export — not blocking, everything else about this milestone is done.
 
 ## Done (ad hoc, outside milestone sequence)
 
@@ -144,12 +185,17 @@ Keep it short. This is a status board, not a diary.
 
 ## In progress
 
-- [ ] Day 8 — observability (Langfuse) + Streamlit dashboard. No spec file
-      yet — write one first, same pattern as prior milestones.
+- [ ] Days 9–10 — evals + README/writeup (flagship polish). No spec file
+      yet — write one first, same pattern as prior milestones. One item
+      outside this milestone remains open: real Langfuse keys (needs the
+      user to set up a free account) to confirm actual trace export from
+      Day 8's tracing work — not blocking, just unverified live.
 
 ## Upcoming (see ROADMAP.md for detail)
 
-- [ ] Days 9–10 — evals + README/writeup (flagship polish)
+Nothing beyond Days 9–10 on the core roadmap — that's the last milestone
+before the MVP cutline. See ROADMAP.md's "Stretch goals" for optional
+post-MVP work (swappable LLM backends, semantic dedup, Phase 2 FastAPI+React).
 
 ## Decision log
 
@@ -283,3 +329,44 @@ Short record of choices, so they aren't relitigated.
   console script this time, not `python -m cli`. **Lesson**: after adding a
   new top-level package, verify the installed console script, not just the
   module run directly from the repo root — they can silently diverge.
+- Langfuse tracing uses `@observe()` decorators sprinkled across existing
+  functions, not a `Tracer` object threaded through every call site (the
+  original instinct). Confirmed experimentally before choosing: a disabled
+  client is a transparent, sub-millisecond no-op safe with any argument
+  type, so decorating adds zero signature changes and zero test-fixture
+  churn — a real, measured cost difference from every prior milestone's
+  approach (Days 4-5 and 6-7 both required extensive test-file rework for
+  new parameters). Threading a client would have required touching the same
+  ~8 files' signatures *and* every test that calls them.
+- LLM-call tracing lives in exactly one place, `agent/llm.py::_call_once` —
+  the shared choke point all 5 structured-output callers already go
+  through — rather than instrumenting each caller separately. One `@observe`
+  covers planner, cited-brief, deep planner, deep synthesis, and extraction
+  simultaneously, including token usage from `response.usage`.
+- `verify/reconcile.py` deliberately has no tracing decorator, even though
+  it would be safe to add — its docstring states "no LLM/network calls" as a
+  hallmark of the package's purity/testability, and adding an external
+  tracing dependency there (even a provably-safe one) would quietly weaken a
+  design property stated as load-bearing. It's still covered indirectly by
+  the parent run-level span's duration.
+- `requirements.txt`'s `langfuse>=2.0` pin was stale: 4.15.2 is what's
+  actually installed, and it's a different, OpenTelemetry-based SDK from
+  2.x's explicit `client.trace()/span()` API. Confirmed by introspecting the
+  installed package directly (constructor signatures, method lists) rather
+  than coding from a remembered API shape, then re-pinned to `>=4.0` so a
+  fresh clone can't silently land on an incompatible 2.x. Same "verify
+  before using" discipline as Anthropic SDK work, applied to a different
+  vendor.
+- Dashboard reuses `memory.repository`'s existing `list_runs`/`load_run` and
+  `verify/reconcile.py`'s `reconcile_facts` directly — no new backend/API
+  layer, no duplicated data-access logic between `cli.py` and `dashboard.py`.
+  Conflicts are recomputed on the fly in the dashboard too, same reasoning
+  as `research-agent show`: the function is pure and idempotent, so a second
+  DB column isn't needed.
+- Dashboard is tested via `streamlit.testing.v1.AppTest` (runs the real
+  `dashboard.py` file, asserts on rendered elements) rather than left
+  manually-verified-only — keeps it inside this project's "test everything
+  offline" discipline instead of carving out an exception for UI code. One
+  additional real `streamlit run` + `curl` smoke test still done by hand,
+  since `AppTest` runs in "bare mode" and doesn't exercise the actual HTTP
+  server path.
