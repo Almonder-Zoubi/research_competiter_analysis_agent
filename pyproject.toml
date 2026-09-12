@@ -15,7 +15,7 @@ research-agent = "cli:main"
 
 [tool.setuptools]
 py-modules = ["cli"]
-packages = ["agent", "tools", "memory"]
+packages = ["agent", "tools", "memory", "verify"]
 
 [tool.ruff.lint.per-file-ignores]
 # This check runs *before* we know the user's interpreter satisfies requires-python

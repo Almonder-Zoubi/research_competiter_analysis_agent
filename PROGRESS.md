@@ -269,3 +269,17 @@ Short record of choices, so they aren't relitigated.
   previously-confirmed one. Fixed by raising `max_tokens` (1200 → 4000,
   matching deep-research's confirmed-working value) and lowering `_MAX_FACTS`
   (40 → 25) to shrink expected output as a second line of defense.
+- **Installed CLI was completely broken** (2026-09-12, found right after the
+  Days 6-7 commit): `research-agent run`/`show`/`list` all crashed with
+  `ModuleNotFoundError: No module named 'verify'` — the new `verify/` package
+  was never added to `pyproject.toml`'s explicit `[tool.setuptools] packages`
+  list, so the editable install didn't expose it. This had been masked during
+  development because live testing this session used `python -m cli ...` from
+  the repo root, which puts the repo root on `sys.path` directly and doesn't
+  go through the installed package at all — the actual `research-agent`
+  console script (what a real user runs, per the README) was never exercised
+  after `verify/` was added. Fixed by adding `"verify"` to the packages list
+  and re-running `pip install -e . --no-deps`; confirmed against the real
+  console script this time, not `python -m cli`. **Lesson**: after adding a
+  new top-level package, verify the installed console script, not just the
+  module run directly from the repo root — they can silently diverge.
