@@ -1,10 +1,14 @@
-"""The thin walking-skeleton loop:
+"""The research loop:
 
-    plan -> search -> store sources -> synthesize one brief -> store -> return
+    plan -> search -> [fetch full page if content is thin] -> extract facts
+    -> store sources + facts -> synthesize one brief -> store -> return
 
 Budget guards from RunState are checked at every step so a run can't run away
-(see CLAUDE.md). Cross-checking facts across sources, and the fully-cited brief
-that's the project's headline feature, are Days 4-7 — this is deliberately crude.
+(see CLAUDE.md). A circuit breaker (RunState.record_tool_failure) stops a run
+from pursuing further sources after too many consecutive tool failures — see
+DAYS_4_5_harden_tools.md. Cross-checking facts across sources, and the fully-
+cited brief that's the project's headline feature, are Days 6-7 — the brief
+synthesized here is still one prose paragraph, deliberately crude.
 
 run_deep_research() is the opt-in, more expensive sibling (see --deep-research
 in cli.py): more targeted search queries and a structured multi-section report
@@ -27,10 +31,22 @@ from agent.planner import plan_search_queries
 from agent.report import render_report_pdf, report_path_for
 from agent.schemas import Brief
 from agent.state import RunState
-from memory.repository import save_brief, save_report_path, save_run, save_sources
+from memory.repository import (
+    save_brief,
+    save_facts,
+    save_report_path,
+    save_run,
+    save_sources,
+)
+from tools.extract import ExtractInput, ExtractTool
+from tools.fetch import FetchInput, FetchTool
 from tools.search import SearchInput, SearchTool
 
 logger = structlog.get_logger()
+
+# Tavily's `content` field is sometimes truncated or empty; a source this thin
+# is worth backfilling with a direct fetch before extraction.
+_THIN_CONTENT_CHARS = 200
 
 BRIEF_SYSTEM_PROMPT = """\
 You are a research analyst. You are given raw text pulled from a few web pages \
@@ -50,6 +66,8 @@ def run_research(
     settings: Settings,
     anthropic_client: Anthropic,
     search_tool: SearchTool,
+    fetch_tool: FetchTool,
+    extract_tool: ExtractTool,
     session_factory: sessionmaker,
 ) -> RunState:
     state = RunState(topic=topic)
@@ -65,6 +83,12 @@ def run_research(
     if state.sources:
         with session_factory() as session:
             save_sources(session, state.run_id, state.sources)
+
+    _backfill_and_extract(state, settings, fetch_tool, extract_tool)
+
+    if state.facts:
+        with session_factory() as session:
+            save_facts(session, state.run_id, state.facts)
 
     state.brief = _synthesize_brief(anthropic_client, settings.model_smart, state)
 
@@ -153,11 +177,81 @@ def _execute_search_plan(
                 category=result.error_category,
                 error=result.error_message,
             )
+            if state.record_tool_failure():
+                logger.warning(
+                    "circuit_breaker.tripped", topic=state.topic, stage="search"
+                )
+                break
             continue
+        state.record_tool_success()
 
         found = result.value or []
         state.sources.extend(found)
         state.sources_used += len(found)
+
+
+def _backfill_and_extract(
+    state: RunState,
+    settings: Settings,
+    fetch_tool: FetchTool,
+    extract_tool: ExtractTool,
+) -> None:
+    """For each source: backfill thin content with a direct fetch (budget- and
+    circuit-breaker-guarded), then extract Facts from whatever content ends up
+    available. A tripped circuit breaker stops the whole pass — the run falls
+    through to synthesis with whatever facts/sources were gathered so far,
+    same "always have something to persist" guarantee as brief synthesis.
+    """
+    for source in state.sources:
+        if (
+            len(source.content) < _THIN_CONTENT_CHARS
+            and state.can_take_step(settings.max_steps)
+            and state.can_fetch_source(settings.max_sources)
+        ):
+            state.steps_used += 1
+            fetch_result = fetch_tool.run(FetchInput(url=source.url))
+            if fetch_result.ok and fetch_result.value is not None:
+                source.content = fetch_result.value.content or source.content
+                source.title = source.title or fetch_result.value.title
+                state.record_tool_success()
+            else:
+                logger.warning(
+                    "fetch.failed",
+                    url=source.url,
+                    category=fetch_result.error_category,
+                    error=fetch_result.error_message,
+                )
+                if state.record_tool_failure():
+                    logger.warning(
+                        "circuit_breaker.tripped", topic=state.topic, stage="fetch"
+                    )
+                    return
+
+        if not state.can_take_step(settings.max_steps):
+            logger.warning(
+                "budget.max_steps_reached", topic=state.topic, stage="extract"
+            )
+            return
+        state.steps_used += 1
+
+        extract_result = extract_tool.run(
+            ExtractInput(source=source, topic=state.topic)
+        )
+        if extract_result.ok and extract_result.value is not None:
+            state.facts.extend(extract_result.value)
+            state.record_tool_success()
+        else:
+            logger.warning(
+                "extract.failed",
+                url=source.url,
+                category=extract_result.error_category,
+                error=extract_result.error_message,
+            )
+            if state.record_tool_failure():
+                logger.warning(
+                    "circuit_breaker.tripped", topic=state.topic, stage="extract"
+                )
+                return
 
 
 def _synthesize_brief(client: Anthropic, model: str, state: RunState) -> str:

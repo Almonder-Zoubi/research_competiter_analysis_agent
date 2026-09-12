@@ -35,15 +35,18 @@ Closed 2026-09-11: `research-agent run --company "Stripe"` ran live end to end
 (run #3 — 8 sources, 1066-char brief, all stored). Tests/ruff/mypy stayed green
 through the live run.
 
-### Days 4–5 — Harden the tools  ← CURRENT
+### Days 4–5 — Harden the tools  ✅ (done)
 Real multi-query search. Fetch tool (httpx + trafilatura) with retries, timeouts,
 robots-awareness, HTML→text cleaning. Structured extraction tool: text → Fact
 objects, validated against Pydantic with one repair retry. Full error-handling
 layer + budget guards enforced everywhere. Circuit breaker so one bad tool doesn't
 kill a run. This is where most engineering-maturity signal lives.
 Detailed spec: DAYS_4_5_harden_tools.md
+Closed 2026-09-12: `research-agent run --company "Notion"` ran live end to end
+(run #7 — 9 sources, 60 extracted facts across all of them, brief synthesized,
+all stored). 74 tests (19 new), ruff + mypy green through the live run.
 
-### Days 6–7 — Verification (the headline feature)
+### Days 6–7 — Verification (the headline feature)  ← CURRENT
 Cross-check / reconcile facts across sources: group by attribute, agreement →
 higher confidence, disagreement → recorded conflict. Confidence = corroborating
 independent sources × source-quality heuristic. Then synthesize a properly cited

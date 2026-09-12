@@ -103,16 +103,18 @@ the run into the ground or blow through the budget on retries.
 
 ## Definition of done for Days 4–5
 
-- [ ] `tools/fetch.py` with error categories, tested offline against an HTML
+- [x] `tools/fetch.py` with error categories, tested offline against an HTML
       fixture
-- [ ] `tools/extract.py` producing validated `Fact` lists, tested offline
+- [x] `tools/extract.py` producing validated `Fact` lists, tested offline
       (incl. the repair-retry path)
-- [ ] loop wires fetch (conditionally) + extract into the existing flow,
+- [x] loop wires fetch (conditionally) + extract into the existing flow,
       behind budget guards
-- [ ] circuit breaker stops a run after repeated consecutive tool failures
-- [ ] one real run on a new company persists sources + facts + brief
-- [ ] pytest / ruff / mypy all green
-- [ ] PROGRESS.md updated (steps checked off, Now/Blockers/Cost refreshed)
+- [x] circuit breaker stops a run after repeated consecutive tool failures
+- [x] one real run on a new company persists sources + facts + brief —
+      `research-agent run --company "Notion"`, run #7: 9 sources, 60 facts,
+      brief stored
+- [x] pytest / ruff / mypy all green — 74 tests (19 new)
+- [x] PROGRESS.md updated (steps checked off, Now/Blockers/Cost refreshed)
 - [ ] committed, with `.env` confirmed still ignored
 
 ## Rules (from CLAUDE.md — repeated because they matter here)

@@ -32,3 +32,23 @@ def test_accumulates_sources_and_facts() -> None:
     assert len(state.sources) == 1
     assert len(state.facts) == 1
     assert state.facts[0].source_url == state.sources[0].url
+
+
+def test_circuit_breaker_trips_after_max_consecutive_failures() -> None:
+    state = RunState(topic="Acme Corp")
+
+    assert state.record_tool_failure() is False
+    assert state.record_tool_failure() is False
+    assert state.record_tool_failure() is True  # 3rd in a row trips it
+
+
+def test_circuit_breaker_resets_on_success() -> None:
+    state = RunState(topic="Acme Corp")
+
+    state.record_tool_failure()
+    state.record_tool_failure()
+    state.record_tool_success()
+
+    assert state.consecutive_failures == 0
+    assert state.record_tool_failure() is False
+    assert state.record_tool_failure() is False

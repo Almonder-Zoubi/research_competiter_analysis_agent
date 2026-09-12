@@ -18,6 +18,8 @@ from agent.config import get_settings
 from agent.loop import run_deep_research, run_research
 from memory.db import make_engine, make_session_factory
 from memory.repository import list_runs, load_run
+from tools.extract import ExtractTool
+from tools.fetch import FetchTool
 from tools.search import SearchTool
 
 logger = structlog.get_logger()
@@ -72,6 +74,8 @@ def _run_command(company: str, *, deep_research: bool) -> int:
     session_factory = make_session_factory(engine)
     anthropic_client = Anthropic(api_key=settings.anthropic_api_key)
     search_tool = SearchTool(client=TavilyClient(api_key=settings.tavily_api_key))
+    fetch_tool = FetchTool()
+    extract_tool = ExtractTool(client=anthropic_client, model=settings.model_fast)
 
     try:
         if deep_research:
@@ -88,6 +92,8 @@ def _run_command(company: str, *, deep_research: bool) -> int:
                 settings=settings,
                 anthropic_client=anthropic_client,
                 search_tool=search_tool,
+                fetch_tool=fetch_tool,
+                extract_tool=extract_tool,
                 session_factory=session_factory,
             )
     except AnthropicError as e:
@@ -171,7 +177,7 @@ def _show_command(run_id: int) -> int:
 
     print(f"\n--- Facts ({len(record.facts)}) ---")
     if not record.facts:
-        print("(none extracted yet — fact extraction lands in Days 4-5)")
+        print("(none extracted for this run)")
     for fact in record.facts:
         print(
             f"- {fact.attribute}: {fact.value} "

@@ -17,6 +17,8 @@ from agent.loop import run_deep_research, run_research
 from agent.planner import make_search_queries
 from memory.db import make_engine, make_session_factory
 from memory.repository import load_run
+from tools.extract import ExtractTool
+from tools.fetch import FetchTool
 from tools.search import SearchTool
 
 
@@ -34,8 +36,10 @@ class _FakeTavilyClient:
 class _FakeMessages:
     def __init__(self, replies: list[str]) -> None:
         self._replies = list(replies)
+        self.calls: list[dict[str, Any]] = []
 
     def create(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
         text = self._replies.pop(0)
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
 
@@ -43,6 +47,35 @@ class _FakeMessages:
 class _FakeAnthropicClient:
     def __init__(self, replies: list[str]) -> None:
         self.messages = _FakeMessages(replies)
+
+
+class _FakeFetchHttpClient:
+    """Stands in for FetchTool's httpx client: allows every robots.txt check and
+    returns the same canned, extractable page for any URL — good enough for
+    loop-level wiring tests. tests/test_fetch.py covers FetchTool's own edge
+    cases (robots disallow, timeouts, 404s, ...) in detail.
+    """
+
+    def __init__(self, page_text: str | None = None) -> None:
+        text = page_text or (
+            "This is a much longer fetched paragraph describing the company in "
+            "far more detail than the short snippet the search tool returned. "
+        )
+        self._page_html = f"<html><body><article><p>{text}</p></article></body></html>"
+
+    def get(self, url: str, **kwargs: Any) -> Any:
+        if url.endswith("/robots.txt"):
+            return SimpleNamespace(status_code=200, text="User-agent: *\nAllow: /\n")
+        return SimpleNamespace(status_code=200, text=self._page_html)
+
+
+class _NeverCalledHttpClient:
+    """Fails the test loudly if FetchTool ever calls .get() — used to prove the
+    backfill step was correctly skipped for content that's already long enough.
+    """
+
+    def get(self, url: str, **kwargs: Any) -> Any:
+        raise AssertionError(f"fetch should not have been called for {url}")
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -64,6 +97,12 @@ def _planner_reply(*queries: str) -> str:
     every fake Anthropic client here needs one reply for that call before the
     brief-synthesis reply."""
     return json.dumps({"queries": list(queries)})
+
+
+def _extract_reply(*facts: tuple[str, str]) -> str:
+    """The loop now runs fact extraction per source too (tools/extract.py) — one
+    reply per source is needed between the planner reply and the brief reply."""
+    return json.dumps({"facts": [{"attribute": a, "value": v} for a, v in facts]})
 
 
 def _deep_planner_reply(subject_type: str, *queries: str) -> str:
@@ -112,6 +151,8 @@ def test_run_research_end_to_end_offline(tmp_path: Path) -> None:
     anthropic_client = _FakeAnthropicClient(
         [
             _planner_reply("Acme company overview", "Acme funding", "Acme founders"),
+            _extract_reply(("product", "widgets")),  # for the "about" source
+            _extract_reply(("funding_total", "$10M")),  # for the "funding" source
             reply,
         ]
     )
@@ -121,19 +162,25 @@ def test_run_research_end_to_end_offline(tmp_path: Path) -> None:
         settings=_settings(),
         anthropic_client=anthropic_client,  # type: ignore[arg-type]
         search_tool=search_tool,
+        fetch_tool=FetchTool(client=_FakeFetchHttpClient()),
+        extract_tool=ExtractTool(client=anthropic_client, model="fake-model"),  # type: ignore[arg-type]
         session_factory=session_factory,
     )
 
     assert state.run_id is not None
     assert state.brief == "Acme makes widgets and raised $10M."
     assert state.sources_used == 2
-    assert state.steps_used == 3
+    # 3 search steps + (1 backfill fetch + 1 extract) per thin source x2:
+    assert state.steps_used == 7
+    assert len(state.facts) == 2
+    assert {f.attribute for f in state.facts} == {"product", "funding_total"}
 
     with session_factory() as session:
         record = load_run(session, state.run_id)
     assert record is not None
     assert record.brief == state.brief
     assert len(record.sources) == 2
+    assert len(record.facts) == 2
 
 
 def test_run_research_stops_at_max_steps(tmp_path: Path) -> None:
@@ -149,6 +196,8 @@ def test_run_research_stops_at_max_steps(tmp_path: Path) -> None:
         settings=_settings(max_steps=1),
         anthropic_client=anthropic_client,  # type: ignore[arg-type]
         search_tool=search_tool,
+        fetch_tool=FetchTool(client=_NeverCalledHttpClient()),
+        extract_tool=ExtractTool(client=anthropic_client, model="fake-model"),  # type: ignore[arg-type]
         session_factory=session_factory,
     )
 
@@ -182,6 +231,8 @@ def test_run_research_repairs_invalid_brief_json_once(tmp_path: Path) -> None:
         settings=_settings(max_steps=1),
         anthropic_client=anthropic_client,  # type: ignore[arg-type]
         search_tool=search_tool,
+        fetch_tool=FetchTool(client=_NeverCalledHttpClient()),
+        extract_tool=ExtractTool(client=anthropic_client, model="fake-model"),  # type: ignore[arg-type]
         session_factory=session_factory,
     )
 
@@ -212,6 +263,8 @@ def test_run_research_gives_up_after_one_failed_repair(tmp_path: Path) -> None:
         settings=_settings(max_steps=1),
         anthropic_client=anthropic_client,  # type: ignore[arg-type]
         search_tool=search_tool,
+        fetch_tool=FetchTool(client=_NeverCalledHttpClient()),
+        extract_tool=ExtractTool(client=anthropic_client, model="fake-model"),  # type: ignore[arg-type]
         session_factory=session_factory,
     )
 
@@ -239,18 +292,112 @@ def test_run_research_falls_back_to_template_plan_if_planner_fails(
     brief_reply = json.dumps({"topic": "Acme", "summary": "Acme makes widgets."})
     # Both planner attempts return invalid JSON; the loop must still complete
     # using the deterministic fallback template, not crash.
-    anthropic_client = _FakeAnthropicClient(["not json", "still not json", brief_reply])
+    anthropic_client = _FakeAnthropicClient(
+        ["not json", "still not json", _extract_reply(), brief_reply]
+    )
 
     state = run_research(
         "Acme",
         settings=_settings(),
         anthropic_client=anthropic_client,  # type: ignore[arg-type]
         search_tool=search_tool,
+        fetch_tool=FetchTool(client=_FakeFetchHttpClient()),
+        extract_tool=ExtractTool(client=anthropic_client, model="fake-model"),  # type: ignore[arg-type]
         session_factory=session_factory,
     )
 
     assert state.plan == make_search_queries("Acme")
     assert state.brief == "Acme makes widgets."
+
+
+def test_run_research_skips_backfill_when_content_is_already_long_enough(
+    tmp_path: Path,
+) -> None:
+    session_factory = _session_factory(tmp_path)
+    long_content = "Acme makes enterprise widgets. " * 10  # well over the threshold
+    search_tool = SearchTool(
+        client=_FakeTavilyClient(
+            {
+                "Acme company overview": [
+                    {
+                        "url": "https://acme.example/about",
+                        "title": "About Acme",
+                        "content": long_content,
+                    }
+                ]
+            }
+        )
+    )
+    brief_reply = json.dumps({"topic": "Acme", "summary": "Acme makes widgets."})
+    anthropic_client = _FakeAnthropicClient(
+        [
+            _planner_reply("Acme company overview"),
+            _extract_reply(("product", "widgets")),
+            brief_reply,
+        ]
+    )
+    never_called_fetch = _NeverCalledHttpClient()
+
+    state = run_research(
+        "Acme",
+        settings=_settings(),
+        anthropic_client=anthropic_client,  # type: ignore[arg-type]
+        search_tool=search_tool,
+        fetch_tool=FetchTool(client=never_called_fetch),
+        extract_tool=ExtractTool(client=anthropic_client, model="fake-model"),  # type: ignore[arg-type]
+        session_factory=session_factory,
+    )
+
+    # No AssertionError from _NeverCalledHttpClient means backfill never ran;
+    # extraction still happened directly against the already-long content.
+    assert state.sources[0].content == long_content
+    assert len(state.facts) == 1
+
+
+def test_run_research_circuit_breaker_stops_extraction_after_repeated_failures(
+    tmp_path: Path,
+) -> None:
+    long_content = "Acme has a long history of making enterprise widgets. " * 5
+    queries = [f"Acme query {i}" for i in range(4)]
+    session_factory = _session_factory(tmp_path)
+    search_tool = SearchTool(
+        client=_FakeTavilyClient(
+            {
+                q: [
+                    {
+                        "url": f"https://acme.example/page-{i}",
+                        "title": f"Page {i}",
+                        "content": long_content,
+                    }
+                ]
+                for i, q in enumerate(queries)
+            }
+        )
+    )
+    brief_reply = json.dumps({"topic": "Acme", "summary": "Acme makes widgets."})
+    # Every extraction attempt returns invalid JSON — 2 replies consumed per
+    # source (initial + one repair retry, see agent/llm.py) — but the circuit
+    # breaker should trip after 3 consecutive failed sources and skip the 4th
+    # entirely, so only 3 sources' worth of bad replies are ever needed.
+    anthropic_client = _FakeAnthropicClient(
+        [_planner_reply(*queries)] + ["not json", "still not json"] * 3 + [brief_reply]
+    )
+
+    state = run_research(
+        "Acme",
+        settings=_settings(),
+        anthropic_client=anthropic_client,  # type: ignore[arg-type]
+        search_tool=search_tool,
+        fetch_tool=FetchTool(client=_NeverCalledHttpClient()),
+        extract_tool=ExtractTool(client=anthropic_client, model="fake-model"),  # type: ignore[arg-type]
+        session_factory=session_factory,
+    )
+
+    assert state.facts == []
+    assert state.brief == "Acme makes widgets."
+    # planner(1) + 3 sources x 2 extraction attempts + brief(1) = 8 — the 4th
+    # source's extraction was never attempted once the breaker tripped.
+    assert len(anthropic_client.messages.calls) == 8
 
 
 def test_run_deep_research_end_to_end_offline(tmp_path: Path) -> None:

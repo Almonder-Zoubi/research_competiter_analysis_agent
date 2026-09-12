@@ -52,24 +52,26 @@ progress). Current state:
 | `RunState` working memory (`agent/state.py`) | ✅ Done |
 | Uniform tool contract — `ToolResult`, error categories (`tools/base.py`) | ✅ Done |
 | Search tool, wrapping Tavily (`tools/search.py`) | ✅ Done |
-| SQL persistence layer — models, engine, repository (`memory/`) | ✅ Done (sources + brief; fact storage wired, not yet populated) |
+| SQL persistence layer — models, engine, repository (`memory/`) | ✅ Done (sources, facts, and briefs all populated) |
 | Thin end-to-end loop + planner (`agent/loop.py`, `agent/planner.py`) | ✅ Done — walking skeleton |
 | CLI entrypoint — `research-agent run --company "<name>"` (`cli.py`) | ✅ Done |
 | LLM-driven planner, subject-aware (`agent/planner.py`) | ✅ Done — company vs. engineering/research field vs. company-initiative; falls back to a fixed template on model failure |
 | Source-quality filter — excludes video/social domains (`tools/search.py`) | ✅ Done (first pass — a blocklist, not full credibility scoring) |
 | `--deep-research` mode — structured multi-section PDF report (`agent/deep_research.py`, `agent/report.py`) | ✅ Done — confirmed live on a real scandal case (Wirecard); see PROGRESS.md for a JSON-truncation bug it surfaced and how it was fixed |
-| Fetch tool (standalone page fetch/clean, beyond Tavily's) | 🔜 Not started |
-| Fact extraction (atomic `attribute/value/source` triples) | 🔜 Not started |
+| Fetch tool (standalone page fetch/clean, beyond Tavily's) (`tools/fetch.py`) | ✅ Done — httpx + trafilatura, robots-aware, retries on transient failures |
+| Fact extraction (atomic `attribute/value/source` triples) (`tools/extract.py`) | ✅ Done — MODEL_FAST, validated + one repair retry; confirmed live (run #7: 60 facts extracted from 9 sources) |
+| Circuit breaker (stops a run after repeated consecutive tool failures) | ✅ Done — `RunState.record_tool_failure`, shared across search/fetch/extract |
 | Verification / cross-checking (`verify/`) | 🔜 Not started |
 | Streamlit dashboard | 🔜 Not started (Phase 2: FastAPI + React, only after core works) |
 
 The goal after each milestone is a working **walking skeleton** end to end — it's
-never left in a broken half-built state for long. As of Days 2-3, `research-agent
-run --company "<name>"` runs the full `plan → search → store → synthesize → store`
-path against real Tavily + Anthropic calls and prints a sourced (if crude) brief.
-It's intentionally rough: one Claude call writes a short summary paragraph, not yet
-the fully cited, per-claim brief that's the project's headline feature — that lands
-once fact extraction and `verify/` exist.
+never left in a broken half-built state for long. As of Days 4-5, `research-agent
+run --company "<name>"` runs the full `plan → search → fetch (if thin) → extract
+facts → store → synthesize → store` path against real Tavily + Anthropic calls,
+persisting atomic facts (not just raw source text) alongside a sourced (if still
+crude) brief. The brief itself is still one prose paragraph — the fully cited,
+per-claim brief that's the project's headline feature lands once `verify/` exists
+(Days 6-7).
 
 ## Tech stack
 
@@ -221,12 +223,16 @@ agent/
                 # (used by planner.py, loop.py's brief synthesis, and deep_research.py)
   deep_research.py # --deep-research query planning + multi-section report synthesis
   report.py     # renders a DeepResearchReport to PDF (reportlab, no LLM/network)
-  loop.py       # the control loop: plan -> search -> store -> synthesize -> store;
-                # also run_deep_research(), the --deep-research sibling
+  loop.py       # the control loop: plan -> search -> fetch (if thin) -> extract
+                # -> store -> synthesize -> store; also run_deep_research()
 tools/
   base.py       # Tool contract: ToolResult, error categories (transient/permanent/validation)
   search.py     # SearchTool, wrapping the Tavily client; excludes a small
                 # blocklist of video/social domains (EXCLUDED_DOMAINS)
+  fetch.py      # FetchTool: httpx + trafilatura direct page fetch, backfills
+                # thin Tavily content; robots.txt checked via the same
+                # injectable client so it stays offline-testable
+  extract.py    # ExtractTool: MODEL_FAST -> validated list[Fact] per source
 memory/
   models.py     # SQLAlchemy ORM: runs, sources, facts
   db.py         # engine/session setup; patches in columns added to an existing
@@ -238,12 +244,14 @@ tests/
   test_state.py
   test_tools_base.py
   test_search.py
+  test_fetch.py
+  test_extract.py
   test_repository.py
   test_loop.py
   test_deep_research.py
   test_report.py
   test_db.py
-  fixtures/     # saved API responses used instead of live network calls
+  fixtures/     # saved API responses / HTML pages used instead of live network calls
 data/
   research.db   # SQLite fact store (local; see note below on git tracking)
 reports/
@@ -257,7 +265,7 @@ DAY0_SETUP.md   # detailed first-time setup walkthrough
 ROADMAP.md      # whole-project milestone map
 PROGRESS.md     # live status — read at the start of a session, update at the end
 DAYS_2_3_walking_skeleton.md # build spec — done
-DAYS_4_5_harden_tools.md     # build spec — current milestone
+DAYS_4_5_harden_tools.md     # build spec — done
 ```
 
 > **Note:** `data/research.db` was committed once, before the `.gitignore` rule
