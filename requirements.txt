@@ -13,7 +13,13 @@ sqlalchemy>=2.0           # ORM over SQLite (swap to Postgres later, same code)
 
 # --- Observability & logging ---
 structlog>=24.0           # structured logging
-langfuse>=2.0             # LLM tracing (hosted free tier; self-host optional)
+langfuse>=4.0             # LLM tracing (hosted free tier; self-host optional).
+                          # NOTE: was pinned >=2.0, but agent/tracing.py and
+                          # every @observe usage in this repo is written
+                          # against 4.x's OpenTelemetry-based client, a
+                          # different API from 2.x's explicit
+                          # client.trace()/span() calls. Re-pinned so a fresh
+                          # install can't silently land on an incompatible 2.x.
 
 # --- Dashboard ---
 streamlit>=1.38           # local web dashboard, pure Python

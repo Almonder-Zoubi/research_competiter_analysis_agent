@@ -13,6 +13,7 @@ model output).
 from __future__ import annotations
 
 from anthropic import Anthropic
+from langfuse import observe
 
 from agent.llm import call_for_structured_output
 from agent.schemas import SearchPlan
@@ -51,6 +52,7 @@ def make_search_queries(topic: str) -> list[str]:
     ]
 
 
+@observe(name="plan_search_queries")
 def plan_search_queries(topic: str, *, client: Anthropic, model: str) -> list[str]:
     plan = call_for_structured_output(
         client,

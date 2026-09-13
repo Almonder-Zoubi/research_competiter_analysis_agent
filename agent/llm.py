@@ -2,8 +2,13 @@
 
 Every call that must return structured data goes through here — see CLAUDE.md's
 hard rule: validate against a Pydantic model, one repair retry on invalid output,
-never trust raw model JSON. Used by both agent/planner.py and agent/loop.py's
-brief synthesis; factored out once a second caller needed it.
+never trust raw model JSON. Used by agent/planner.py, agent/cited_brief.py,
+agent/deep_research.py, and tools/extract.py; factored out once a second caller
+needed it.
+
+_call_once is also the single choke point for LLM-call tracing (Day 8, see
+agent/tracing.py) — every one of those callers' Anthropic calls is traced here,
+once, rather than instrumenting each call site separately.
 """
 
 from __future__ import annotations
@@ -11,6 +16,7 @@ from __future__ import annotations
 from typing import TypeVar
 
 from anthropic import Anthropic
+from langfuse import get_client, observe
 from pydantic import BaseModel, ValidationError
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -57,6 +63,12 @@ def call_for_structured_output(
     return parsed
 
 
+@observe(
+    name="anthropic_call",
+    as_type="generation",
+    capture_input=False,
+    capture_output=False,
+)
 def _call_once(
     client: Anthropic,
     model: str,
@@ -72,6 +84,23 @@ def _call_once(
         messages=[{"role": "user", "content": user_prompt}],
     )
     text = "".join(block.text for block in response.content if block.type == "text")
+
+    # Recorded on the current @observe-created generation span, not returned —
+    # a no-op when tracing is disabled (see agent/tracing.py; confirmed safe
+    # to call unconditionally, no active-span check needed by callers).
+    # getattr, not response.usage directly: test fakes across this project
+    # return a bare SimpleNamespace(content=...) with no .usage, and this is
+    # a secondary observability signal, not core behavior worth failing over.
+    usage = getattr(response, "usage", None)
+    usage_details = (
+        {"input": usage.input_tokens, "output": usage.output_tokens}
+        if usage is not None
+        else None
+    )
+    get_client().update_current_generation(
+        model=model, input=user_prompt, output=text, usage_details=usage_details
+    )
+
     try:
         return schema.model_validate_json(_strip_code_fence(text)), None
     except ValidationError as e:

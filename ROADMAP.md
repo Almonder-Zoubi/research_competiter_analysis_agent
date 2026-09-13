@@ -46,23 +46,65 @@ Closed 2026-09-12: `research-agent run --company "Notion"` ran live end to end
 (run #7 — 9 sources, 60 extracted facts across all of them, brief synthesized,
 all stored). 74 tests (19 new), ruff + mypy green through the live run.
 
-### Days 6–7 — Verification (the headline feature)  ← CURRENT
+### Days 6–7 — Verification (the headline feature)  ✅ (done)
 Cross-check / reconcile facts across sources: group by attribute, agreement →
 higher confidence, disagreement → recorded conflict. Confidence = corroborating
 independent sources × source-quality heuristic. Then synthesize a properly cited
 brief where every claim carries a source. Make verification visible in output.
+Detailed spec: DAYS_6_7_verification.md
+Closed 2026-09-12: new `verify/` package (`reconcile.py`, `grounding.py`),
+`agent/cited_brief.py` replacing raw-text brief synthesis, conflicts surfaced
+in both `run` and `show`. Confirmed live on Figma (run #9) — 18 grounded
+cited claims, 7 real conflicts (differing founding years, funding rounds,
+valuations over time, the Adobe acquisition), confidence spread 0.3–1.0
+across 61 facts. A first attempt (run #8) found a real truncation bug
+(`max_tokens` too low), same root cause as the earlier Wirecard bug at a
+different call site — fixed and reconfirmed. 92 tests, ruff + mypy green.
 
-### Day 8 — Observability + dashboard
+### Day 8 — Observability + dashboard  ✅ (done)
 Wire Langfuse tracing on every loop step (plan, each tool call, each LLM call:
 tokens, cost, latency, decision). Streamlit dashboard: run list, brief view, facts
 table with confidence, conflicts, and run metrics.
+Detailed spec: DAY_8_observability_dashboard.md
+Closed 2026-09-12: both built. Tracing via `@observe()` decorators (found the
+installed langfuse SDK is 4.x/OpenTelemetry-based, not the 2.x the old pin
+assumed — re-pinned and wrote agent/tracing.py against the real API,
+confirmed empty-key construction is instant and safe); zero test-file
+changes needed since it's a no-op when disabled. Dashboard (`dashboard.py`)
+reads the same `memory.repository` functions the CLI does; tested offline
+via Streamlit's own `AppTest` harness plus one real `streamlit run` smoke
+test. Confirmed live: `research-agent run --company "Linear"` (run #10) with
+the dashboard server running — the new run appeared immediately, no
+restart; also surfaced 8 real conflicts. 95 tests, ruff + mypy green. Only
+open item: real Langfuse keys (needs the user to create a free account) to
+confirm actual trace export — not blocking.
 
-### Days 9–10 — Evals + polish (what makes it a flagship)
+### Days 9–10 — Evals + polish (what makes it a flagship)  ✅ (done)
 5–10 golden test cases. Metrics led by groundedness (every claim traces to a
 source?) and citation coverage, plus fact recall/precision and an LLM-as-judge for
 brief quality. Then the portfolio layer: README with architecture diagram, demo
 GIF, and a design-decisions + eval-results writeup. The writeup is what separates a
 flagship from "some agent code."
+Detailed spec: DAYS_9_10_evals_and_polish.md
+Closed 2026-09-13: new `evals/` package scores 5 golden cases
+retrospectively against real live runs already in the DB ($0, no fresh
+searches) — `citation_coverage` (parses the real persisted brief text) and
+`fact_recall` (pure), plus an opt-in LLM-as-judge (`--judge`, never called by
+default; MODEL_SMART, one call per case). Real result straight from the DB:
+0% citation coverage on the 3 pre-Days-6-7 runs, 100% on the 2
+post-verification runs, 100% fact recall on every case with real facts.
+Confirmed with a real `--judge` run: the judge's groundedness score climbs
+1→1→2→4→3 in the *same order* as citation coverage — an independent
+qualitative signal agreeing with the objective metric, while clarity stayed
+high (4-5/5) throughout regardless, showing a brief can read well while
+still being ungrounded. README gained a Mermaid architecture diagram +
+this eval-results table. Found a second instance of the Days 6-7 packaging
+bug (`evals/` also missing from `pyproject.toml`'s packages list) — caught
+immediately this time and fixed a permanent regression test
+(`tests/test_packaging.py`) into place so a third package can't repeat it.
+115 tests, ruff + mypy green. Only remaining item: a demo GIF, left to the
+user (no screen-recording capability in this environment) — not blocking.
+This closes the core roadmap through the MVP cutline.
 
 ## MVP cutline
 

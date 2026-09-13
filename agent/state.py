@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from agent.schemas import DeepResearchReport, Fact, Source
+from agent.schemas import Conflict, DeepResearchReport, Fact, Source
 
 # Circuit breaker (DAYS_4_5_harden_tools.md Step 4): this many consecutive tool
 # failures (search, fetch, or extract) stops a run from pursuing further
@@ -24,6 +24,7 @@ class RunState:
     plan: list[str] = field(default_factory=list)
     sources: list[Source] = field(default_factory=list)
     facts: list[Fact] = field(default_factory=list)
+    conflicts: list[Conflict] = field(default_factory=list)
     brief: str | None = None
 
     # --deep-research only:

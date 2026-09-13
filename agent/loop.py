@@ -1,19 +1,21 @@
 """The research loop:
 
     plan -> search -> [fetch full page if content is thin] -> extract facts
-    -> store sources + facts -> synthesize one brief -> store -> return
+    -> reconcile (confidence, conflicts) -> store sources + facts
+    -> synthesize a cited brief from the reconciled facts -> store -> return
 
 Budget guards from RunState are checked at every step so a run can't run away
 (see CLAUDE.md). A circuit breaker (RunState.record_tool_failure) stops a run
 from pursuing further sources after too many consecutive tool failures — see
-DAYS_4_5_harden_tools.md. Cross-checking facts across sources, and the fully-
-cited brief that's the project's headline feature, are Days 6-7 — the brief
-synthesized here is still one prose paragraph, deliberately crude.
+DAYS_4_5_harden_tools.md. Reconciliation and brief synthesis are the project's
+headline feature (see CLAUDE.md, DAYS_6_7_verification.md): every claim in the
+brief cites a real source, and disagreeing sources are flagged as conflicts
+instead of silently picked between.
 
 run_deep_research() is the opt-in, more expensive sibling (see --deep-research
 in cli.py): more targeted search queries and a structured multi-section report
-rendered to PDF, instead of one prose paragraph. It shares the same
-budget-guarded search execution as run_research() via _execute_search_plan().
+rendered to PDF, instead of a cited brief. It shares the same budget-guarded
+search execution as run_research() via _execute_search_plan().
 """
 
 from __future__ import annotations
@@ -22,14 +24,14 @@ from pathlib import Path
 
 import structlog
 from anthropic import Anthropic
+from langfuse import get_client, observe
 from sqlalchemy.orm import sessionmaker
 
+from agent.cited_brief import render_brief_text, synthesize_cited_brief
 from agent.config import Settings
 from agent.deep_research import plan_deep_research_queries, synthesize_deep_report
-from agent.llm import call_for_structured_output
 from agent.planner import plan_search_queries
 from agent.report import render_report_pdf, report_path_for
-from agent.schemas import Brief
 from agent.state import RunState
 from memory.repository import (
     save_brief,
@@ -41,6 +43,8 @@ from memory.repository import (
 from tools.extract import ExtractInput, ExtractTool
 from tools.fetch import FetchInput, FetchTool
 from tools.search import SearchInput, SearchTool
+from verify.grounding import drop_ungrounded_claims
+from verify.reconcile import reconcile_facts
 
 logger = structlog.get_logger()
 
@@ -48,18 +52,8 @@ logger = structlog.get_logger()
 # is worth backfilling with a direct fetch before extraction.
 _THIN_CONTENT_CHARS = 200
 
-BRIEF_SYSTEM_PROMPT = """\
-You are a research analyst. You are given raw text pulled from a few web pages \
-about a company. Write a short, factual brief grounded only in that text — do not \
-add outside knowledge.
 
-Respond with ONLY valid JSON matching this schema, no other text:
-{"topic": "<company name>", "summary": "<3-6 sentence summary>"}"""
-
-_SOURCE_CHARS_PER_ITEM = 2000
-_BRIEF_SCHEMA_HINT = '{"topic": "...", "summary": "..."}'
-
-
+@observe(name="run_research", capture_input=False, capture_output=False)
 def run_research(
     topic: str,
     *,
@@ -70,6 +64,11 @@ def run_research(
     extract_tool: ExtractTool,
     session_factory: sessionmaker,
 ) -> RunState:
+    # Input/output captured explicitly (topic, then the rendered brief) rather
+    # than via @observe's default arg/return capture — several args here
+    # (settings, the tools, session_factory) aren't meaningfully serializable
+    # and aren't what anyone reading a trace wants to see anyway.
+    get_client().update_current_span(input=topic)
     state = RunState(topic=topic)
 
     with session_factory() as session:
@@ -85,19 +84,24 @@ def run_research(
             save_sources(session, state.run_id, state.sources)
 
     _backfill_and_extract(state, settings, fetch_tool, extract_tool)
+    state.facts, state.conflicts = reconcile_facts(state.facts)
 
     if state.facts:
         with session_factory() as session:
             save_facts(session, state.run_id, state.facts)
 
-    state.brief = _synthesize_brief(anthropic_client, settings.model_smart, state)
+    state.brief = _synthesize_cited_brief_text(
+        anthropic_client, settings.model_smart, state
+    )
 
     with session_factory() as session:
         save_brief(session, state.run_id, state.brief)
 
+    get_client().update_current_span(output=state.brief)
     return state
 
 
+@observe(name="run_deep_research", capture_input=False, capture_output=False)
 def run_deep_research(
     topic: str,
     *,
@@ -112,6 +116,7 @@ def run_deep_research(
     prose paragraph. See DAYS_4_5_harden_tools.md and PROGRESS.md for the cost
     delta versus the default run.
     """
+    get_client().update_current_span(input=topic)
     state = RunState(topic=topic)
 
     with session_factory() as session:
@@ -147,6 +152,7 @@ def run_deep_research(
     with session_factory() as session:
         save_report_path(session, state.run_id, state.report_path)
 
+    get_client().update_current_span(output=state.report_path)
     return state
 
 
@@ -254,32 +260,35 @@ def _backfill_and_extract(
                 return
 
 
-def _synthesize_brief(client: Anthropic, model: str, state: RunState) -> str:
-    if not state.sources:
-        return f"No sources were found for {state.topic!r} — nothing to summarize."
+def _synthesize_cited_brief_text(client: Anthropic, model: str, state: RunState) -> str:
+    """Turns state.facts (already reconciled — see reconcile_facts) into the
+    plain-text brief that gets persisted, enforcing the headline guarantee
+    (every claim carries a source) at each stage rather than trusting the
+    prompt alone: no facts / a failed model call / every claim getting
+    filtered as ungrounded each get their own explanatory fallback, so a run
+    never ends with nothing to show.
+    """
+    if not state.facts:
+        return (
+            f"No verifiable facts were found for {state.topic!r} — "
+            "nothing to summarize."
+        )
 
-    user_prompt = _build_user_prompt(state)
-    brief = call_for_structured_output(
-        client,
-        model,
-        system_prompt=BRIEF_SYSTEM_PROMPT,
-        user_prompt=user_prompt,
-        schema=Brief,
-        schema_hint=_BRIEF_SCHEMA_HINT,
-        max_tokens=500,
-    )
-
+    brief = synthesize_cited_brief(client, model, topic=state.topic, facts=state.facts)
     if brief is None:
         logger.warning("brief.invalid_after_repair", topic=state.topic)
-        return f"Could not synthesize a brief for {state.topic} (model output invalid after retry)."
+        return (
+            f"Could not synthesize a cited brief for {state.topic} "
+            "(model output invalid after retry)."
+        )
 
-    return brief.summary
+    valid_urls = {source.url for source in state.sources}
+    grounded_claims = drop_ungrounded_claims(brief.claims, valid_urls)
+    if not grounded_claims:
+        logger.warning("brief.no_grounded_claims", topic=state.topic)
+        return (
+            f"Could not produce a grounded brief for {state.topic} "
+            "(no claim cited a real source)."
+        )
 
-
-def _build_user_prompt(state: RunState) -> str:
-    sources_text = "\n\n".join(
-        f"Source: {source.url}\nTitle: {source.title}\n"
-        f"{source.content[:_SOURCE_CHARS_PER_ITEM]}"
-        for source in state.sources
-    )
-    return f"Company: {state.topic}\n\nSources:\n{sources_text}"
+    return render_brief_text(brief.model_copy(update={"claims": grounded_claims}))

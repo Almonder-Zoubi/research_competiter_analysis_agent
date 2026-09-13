@@ -21,3 +21,10 @@ __pycache__/
 .DS_Store
 .vscode/*
 !.vscode/settings.json
+
+# Claude Code local tooling cache (bundled/fetched skills — regenerated on
+# demand, not authored project content). If project-shared config like
+# .claude/settings.json or custom commands gets added later, carve out an
+# exception the same way .vscode/settings.json is above.
+.claude/
+.agents/
