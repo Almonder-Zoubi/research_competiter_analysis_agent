@@ -32,6 +32,28 @@ an interview):
 plan -> execute (tools) -> verify (cross-check) -> synthesize (brief) -> persist
 ```
 
+That's the one-line version; this is what it actually does end to end, including
+where tracing and the downstream consumers (CLI, dashboard, eval harness) plug in:
+
+```mermaid
+flowchart LR
+    A["Plan queries<br/>(Haiku)"] --> B["Search<br/>(Tavily)"]
+    B --> C{"Content<br/>too thin?"}
+    C -->|yes| D["Fetch full page<br/>(httpx + trafilatura)"]
+    C -->|no| E["Extract facts<br/>(Haiku)"]
+    D --> E
+    E --> F["Reconcile<br/>confidence + conflicts"]
+    F --> G["Synthesize cited brief<br/>(Sonnet)"]
+    G --> H[("SQLite<br/>runs / sources / facts")]
+    F -.conflicts.-> H
+    H --> I["CLI: list / show"]
+    H --> J["Streamlit dashboard"]
+    H --> K["research-agent eval"]
+    B -.optional trace.-> L["Langfuse"]
+    E -.optional trace.-> L
+    G -.optional trace.-> L
+```
+
 - **`RunState`** — a typed dataclass that is the loop's working memory: the topic,
   the search plan, sources fetched, facts extracted, the final brief, and running
   counters against the budget guards. Threaded through every step of the loop.
@@ -39,6 +61,9 @@ plan -> execute (tools) -> verify (cross-check) -> synthesize (brief) -> persist
   facts across runs and is used to skip re-fetching URLs already seen.
 - **Tools** — plain Python functions with a Pydantic input/output schema, each
   wrapped in uniform error handling, so the planner can call them predictably.
+- **One database, three readers** — the CLI, the Streamlit dashboard, and the eval
+  harness all read the same SQLite DB through the same `memory.repository`
+  functions; none of them re-implement data access or talk to each other directly.
 
 ## Status
 
@@ -54,7 +79,7 @@ progress). Current state:
 | Search tool, wrapping Tavily (`tools/search.py`) | ✅ Done |
 | SQL persistence layer — models, engine, repository (`memory/`) | ✅ Done (sources, facts, and briefs all populated) |
 | Thin end-to-end loop + planner (`agent/loop.py`, `agent/planner.py`) | ✅ Done — walking skeleton |
-| CLI entrypoint — `research-agent run --company "<name>"` (`cli.py`) | ✅ Done |
+| CLI entrypoint — `research-agent run --company "<name>"` / `--subject "<title>"` (`cli.py`) | ✅ Done |
 | LLM-driven planner, subject-aware (`agent/planner.py`) | ✅ Done — company vs. engineering/research field vs. company-initiative; falls back to a fixed template on model failure |
 | Source-quality filter — excludes video/social domains (`tools/search.py`) | ✅ Done (first pass — a blocklist, not full credibility scoring) |
 | `--deep-research` mode — structured multi-section PDF report (`agent/deep_research.py`, `agent/report.py`) | ✅ Done — confirmed live on a real scandal case (Wirecard); see PROGRESS.md for a JSON-truncation bug it surfaced and how it was fixed |
@@ -65,6 +90,8 @@ progress). Current state:
 | Cited, per-claim brief (`agent/cited_brief.py`, `verify/grounding.py`) | ✅ Done — every claim cites its exact source; ungrounded claims are dropped in code, not just prompted against |
 | Langfuse tracing (`agent/tracing.py`) | ✅ Done — `@observe()` on plan/tool/LLM-call/run steps; safe no-op without keys (no Langfuse account configured yet, so real trace export is unverified) |
 | Streamlit dashboard (`dashboard.py`) | ✅ Done — run list + run detail (brief, sources, facts w/ confidence, conflicts); tested offline via Streamlit's `AppTest` harness. FastAPI + React remains an explicit Phase 2, only after core works |
+| Eval harness — `research-agent eval [--judge]` (`evals/`) | ✅ Done — scores 5 golden cases retrospectively against real runs already in the DB ($0 unless `--judge`); real result: 0% citation coverage pre-verification, 100% post-verification |
+| Portfolio writeup (README architecture diagram, eval-results writeup, demo GIF) | 🔜 In progress — the diagram and writeup are next; the demo GIF is on the user (needs a screen recording) |
 
 The goal after each milestone is a working **walking skeleton** end to end — it's
 never left in a broken half-built state for long. As of Days 6-7, `research-agent
@@ -138,29 +165,34 @@ Claude Code VS Code extension.
 
 ```bash
 research-agent run --company "Stripe"
+# or, for a research subject/field rather than a company:
+research-agent run --subject "quantum computing"
 ```
 
-This runs the full loop against real Tavily + Anthropic calls: asks Claude (Haiku)
-to plan a few search queries suited to the subject, searches, backfills any thin
-result with a direct page fetch, extracts atomic facts from each source (Haiku),
-reconciles them (corroboration raises confidence, disagreement is flagged as a
-conflict — pure, $0), asks Claude (Sonnet) to write one cited claim per fact, and
-prints the brief (each line ending in its source URL) plus any conflicts found.
-Works for companies ("Stripe"), engineering/research fields ("harness
-engineering"), or a specific initiative inside a larger company ("Mercedes-Benz
-Tech Innovation") — the planner adapts its query strategy to which kind of subject
-it is. Expect roughly one Tavily credit per query and a couple of cents of Claude
-usage per run (one cheap Haiku call for planning, one Haiku call per source for
-extraction, one Sonnet call for the cited brief).
+`--company` and `--subject` are the same underlying parameter — pick whichever
+reads naturally for your topic. This runs the full loop against real Tavily +
+Anthropic calls: asks Claude (Haiku) to plan a few search queries suited to the
+subject, searches, backfills any thin result with a direct page fetch, extracts
+atomic facts from each source (Haiku), reconciles them (corroboration raises
+confidence, disagreement is flagged as a conflict — pure, $0), asks Claude (Sonnet)
+to write one cited claim per fact, and prints the brief (each line ending in its
+source URL) plus any conflicts found. Works for companies ("Stripe"),
+engineering/research fields ("harness engineering", "quantum computing"), or a
+specific initiative inside a larger company ("Mercedes-Benz Tech Innovation") — the
+planner adapts its query strategy to which kind of subject it is. Expect roughly
+one Tavily credit per query and a couple of cents of Claude usage per run (one
+cheap Haiku call for planning, one Haiku call per source for extraction, one Sonnet
+call for the cited brief).
 
 `setup.sh` installs the project in editable mode so the `research-agent` command is
 available once the venv is active; equivalently, `python cli.py run --company "..."`
-works without that install step.
+(or `--subject`) works without that install step.
 
 ### Deep research mode
 
 ```bash
 research-agent run --company "Wirecard" --deep-research
+research-agent run --subject "quantum computing" --deep-research
 ```
 
 The default brief is deliberately thin (one paragraph) — `--deep-research` is for
@@ -211,6 +243,48 @@ Set `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` in `.env` (free tier at
 run — every plan/tool/LLM call, with tokens and latency — in the Langfuse UI.
 Without keys, tracing is a safe no-op: nothing is sent, nothing changes about
 how the CLI behaves or what it costs.
+
+### Evals
+
+```bash
+research-agent eval           # $0 — scores golden cases against runs already in the DB
+research-agent eval --judge   # + an LLM-as-judge quality score per case, a few cents
+```
+
+Rather than re-running fresh (paid) searches to build a "clean" eval set, the
+harness scores the **real runs already in the database** — every prior
+milestone's own live proof-of-work doubles as eval data. Two metrics, computed
+purely from what was actually persisted (not internal pipeline state):
+
+- **Citation coverage** — the fraction of a brief's lines that end in a citation
+  to a source the run actually fetched.
+- **Fact recall** — the fraction of a handful of real, verifiable facts per topic
+  (e.g. Notion's founding year, Figma's founders) found among that run's
+  extracted facts.
+
+The 5 golden cases deliberately span this project's own before/after on
+verification — Stripe and "harness engineering" predate fact extraction
+entirely (Days 4-5), Notion predates the cited brief (Days 6-7), Figma and
+Linear postdate both:
+
+| Topic | Run | Citation coverage | Fact recall | Clarity (judge) | Groundedness (judge) |
+|---|---|---|---|---|---|
+| Stripe | #3 | 0% | n/a (no facts extracted yet) | 4/5 | 1/5 |
+| harness engineering | #4 | 0% | n/a (no facts extracted yet) | 4/5 | 1/5 |
+| Notion | #7 | 0% | 100% | 5/5 | 2/5 |
+| Figma | #9 | 100% | 100% | 5/5 | 4/5 |
+| Linear | #10 | 100% | 100% | 4/5 | 3/5 |
+
+That's the actual output of `research-agent eval --judge` against this repo's
+real database, not a mocked-up table. Two independent signals tell the same
+story: citation coverage is exactly 0% before the cited-brief rewrite and 100%
+after, and the LLM-judge's groundedness score — computed independently, with no
+visibility into the citation-coverage metric — climbs in lockstep (1 → 1 → 2 →
+4 → 3) as the pipeline gained fact extraction (Days 4-5) and then cited
+synthesis (Days 6-7). Clarity stays high throughout (4-5/5) regardless of
+citation coverage — a reminder that a brief can read well while still being
+ungrounded, which is exactly why groundedness needed its own metric rather
+than trusting "sounds good" as a proxy for "is true."
 
 ## Configuration
 
@@ -265,12 +339,18 @@ verify/
   reconcile.py  # pure, $0: groups facts by attribute, corroboration across
                 # independent domains raises confidence, disagreement -> Conflict
   grounding.py  # pure, $0: drops any brief claim citing a source it wasn't given
+evals/
+  golden_cases.py # 5 cases drawn from real stored runs, not invented
+  metrics.py    # pure, $0: citation_coverage (parses the real brief text),
+                # fact_recall — both score real persisted runs, not internal state
+  judge.py      # opt-in LLM-as-judge (MODEL_SMART); never called by default
+  run_eval.py   # orchestration + report rendering for `research-agent eval`
 memory/
   models.py     # SQLAlchemy ORM: runs, sources, facts
   db.py         # engine/session setup; patches in columns added to an existing
                 # table (create_all() only creates missing tables, not columns)
   repository.py # converts between ORM rows and the Pydantic schemas
-cli.py          # research-agent run [--deep-research] / list / show
+cli.py          # research-agent run [--deep-research] / list / show / eval [--judge]
 dashboard.py    # Streamlit dashboard: run list + run detail; `streamlit run dashboard.py`
 tests/
   test_config.py
@@ -288,6 +368,11 @@ tests/
   test_report.py
   test_db.py
   test_dashboard.py  # via streamlit.testing.v1.AppTest — no browser needed
+  test_eval_metrics.py
+  test_judge.py
+  test_run_eval.py
+  test_packaging.py  # regression test: every top-level package must be in
+                      # pyproject.toml's setuptools packages list (bit twice)
   fixtures/     # saved API responses / HTML pages used instead of live network calls
 data/
   research.db   # SQLite fact store (local; see note below on git tracking)
@@ -305,7 +390,8 @@ PROGRESS.md     # live status — read at the start of a session, update at the 
 DAYS_2_3_walking_skeleton.md # build spec — done
 DAYS_4_5_harden_tools.md     # build spec — done
 DAYS_6_7_verification.md     # build spec — done
-DAY_8_observability_dashboard.md # build spec — current milestone
+DAY_8_observability_dashboard.md # build spec — done
+DAYS_9_10_evals_and_polish.md    # build spec — current milestone
 ```
 
 > **Note:** `data/research.db` was committed once, before the `.gitignore` rule
@@ -320,7 +406,7 @@ source .venv/bin/activate
 
 pytest                                              # run the test suite (all offline — no live network calls)
 ruff check . && ruff format --check .               # lint + format check
-mypy agent tools memory verify cli.py dashboard.py tests conftest.py verify_setup.py  # type check
+mypy agent tools memory verify evals cli.py dashboard.py tests conftest.py verify_setup.py  # type check
 ```
 
 ### Ground rules (enforced throughout)

@@ -82,11 +82,12 @@ Hand-rolled loop (NOT LangGraph/CrewAI — I want to own the control flow for in
   section, check off completed items, and add any decision to the decision log.
   Keep it short.
 - **DAYS_2_3_walking_skeleton.md**, **DAYS_4_5_harden_tools.md**,
-  **DAYS_6_7_verification.md** (all done), and
-  **DAY_8_observability_dashboard.md** (current, mostly done) — turn-by-turn
-  build specs per milestone. Each new milestone gets its own spec file;
-  check PROGRESS.md for which milestone is current and whether its spec file
-  has been written yet.
+  **DAYS_6_7_verification.md**, **DAY_8_observability_dashboard.md**, and
+  **DAYS_9_10_evals_and_polish.md** (all done — the core roadmap is
+  complete through the MVP cutline) — turn-by-turn build specs per
+  milestone. Each new milestone gets its own spec file; check PROGRESS.md
+  for which milestone is current and whether its spec file has been
+  written yet.
 
 At the start of a session, read PROGRESS.md to see where things stand. At the end,
 update it. This keeps every session (and any reviewer) oriented without re-briefing.

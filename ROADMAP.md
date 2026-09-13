@@ -79,12 +79,32 @@ restart; also surfaced 8 real conflicts. 95 tests, ruff + mypy green. Only
 open item: real Langfuse keys (needs the user to create a free account) to
 confirm actual trace export — not blocking.
 
-### Days 9–10 — Evals + polish (what makes it a flagship)  ← CURRENT
+### Days 9–10 — Evals + polish (what makes it a flagship)  ✅ (done)
 5–10 golden test cases. Metrics led by groundedness (every claim traces to a
 source?) and citation coverage, plus fact recall/precision and an LLM-as-judge for
 brief quality. Then the portfolio layer: README with architecture diagram, demo
 GIF, and a design-decisions + eval-results writeup. The writeup is what separates a
 flagship from "some agent code."
+Detailed spec: DAYS_9_10_evals_and_polish.md
+Closed 2026-09-13: new `evals/` package scores 5 golden cases
+retrospectively against real live runs already in the DB ($0, no fresh
+searches) — `citation_coverage` (parses the real persisted brief text) and
+`fact_recall` (pure), plus an opt-in LLM-as-judge (`--judge`, never called by
+default; MODEL_SMART, one call per case). Real result straight from the DB:
+0% citation coverage on the 3 pre-Days-6-7 runs, 100% on the 2
+post-verification runs, 100% fact recall on every case with real facts.
+Confirmed with a real `--judge` run: the judge's groundedness score climbs
+1→1→2→4→3 in the *same order* as citation coverage — an independent
+qualitative signal agreeing with the objective metric, while clarity stayed
+high (4-5/5) throughout regardless, showing a brief can read well while
+still being ungrounded. README gained a Mermaid architecture diagram +
+this eval-results table. Found a second instance of the Days 6-7 packaging
+bug (`evals/` also missing from `pyproject.toml`'s packages list) — caught
+immediately this time and fixed a permanent regression test
+(`tests/test_packaging.py`) into place so a third package can't repeat it.
+115 tests, ruff + mypy green. Only remaining item: a demo GIF, left to the
+user (no screen-recording capability in this environment) — not blocking.
+This closes the core roadmap through the MVP cutline.
 
 ## MVP cutline
 

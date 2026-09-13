@@ -1,4 +1,13 @@
-"""CLI entrypoint: `research-agent run --company "<name>"`.
+"""CLI entrypoint: `research-agent run --company "<name>"` or
+`research-agent run --subject "<title>"`.
+
+--company and --subject are the same underlying parameter (run_research()/
+run_deep_research() already take a subject-agnostic `topic: str` — the
+planner itself classifies it as a company, a research field, or an
+initiative; see agent/planner.py and the "harness engineering" proof run in
+PROGRESS.md). Two flags exist only so the command reads naturally for either
+case: a company/organization, or a research subject, field, or scientific/
+technical area (e.g. "quantum computing", "IT infrastructure").
 
 Runs the loop once against real Tavily + Anthropic calls — this is the one place
 in the project where live network calls are expected (see CLAUDE.md: the test
@@ -18,6 +27,7 @@ from agent.config import get_settings
 from agent.loop import run_deep_research, run_research
 from agent.schemas import Conflict
 from agent.tracing import flush_tracing, init_tracing
+from evals.run_eval import render_eval_report, run_evals
 from memory.db import make_engine, make_session_factory
 from memory.repository import list_runs, load_run
 from tools.extract import ExtractTool
@@ -33,10 +43,21 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser(
-        "run", help="Research a company and print a sourced brief."
+        "run",
+        help=(
+            "Research a company, subject, or research field and print a sourced brief."
+        ),
     )
-    run_parser.add_argument(
-        "--company", required=True, help="Company or topic to research."
+    topic_group = run_parser.add_mutually_exclusive_group(required=True)
+    topic_group.add_argument("--company", help="Company or organization to research.")
+    topic_group.add_argument(
+        "--subject",
+        help=(
+            "A research subject, field, or scientific/technical area to "
+            'research (e.g. "quantum computing", "IT infrastructure", '
+            '"harness engineering"). Same as --company under the hood — '
+            "whichever flag reads naturally for your topic."
+        ),
     )
     run_parser.add_argument(
         "--deep-research",
@@ -58,20 +79,40 @@ def main(argv: list[str] | None = None) -> int:
         "--run-id", required=True, type=int, help="Run id, from `research-agent list`."
     )
 
+    eval_parser = subparsers.add_parser(
+        "eval",
+        help=(
+            "Score the golden-case eval suite against runs already in the "
+            "database (see DAYS_9_10_evals_and_polish.md). $0 by default."
+        ),
+    )
+    eval_parser.add_argument(
+        "--judge",
+        action="store_true",
+        help=(
+            "Also ask Claude (MODEL_SMART) to rate each scored case's brief "
+            "for clarity and groundedness — one extra call per case, a few "
+            "cents total. Off by default."
+        ),
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "run":
-        return _run_command(args.company, deep_research=args.deep_research)
+        topic = args.company or args.subject
+        return _run_command(topic, deep_research=args.deep_research)
     if args.command == "list":
         return _list_command()
     if args.command == "show":
         return _show_command(args.run_id)
+    if args.command == "eval":
+        return _eval_command(use_judge=args.judge)
 
     parser.print_help()
     return 1
 
 
-def _run_command(company: str, *, deep_research: bool) -> int:
+def _run_command(topic: str, *, deep_research: bool) -> int:
     settings = get_settings()
     init_tracing(settings)
     engine = make_engine(settings.database_url)
@@ -84,7 +125,7 @@ def _run_command(company: str, *, deep_research: bool) -> int:
     try:
         if deep_research:
             state = run_deep_research(
-                company,
+                topic,
                 settings=settings,
                 anthropic_client=anthropic_client,
                 search_tool=search_tool,
@@ -92,7 +133,7 @@ def _run_command(company: str, *, deep_research: bool) -> int:
             )
         else:
             state = run_research(
-                company,
+                topic,
                 settings=settings,
                 anthropic_client=anthropic_client,
                 search_tool=search_tool,
@@ -138,7 +179,10 @@ def _list_command() -> int:
         summaries = list_runs(session)
 
     if not summaries:
-        print('No runs stored yet — try `research-agent run --company "<name>"`.')
+        print(
+            'No runs stored yet — try `research-agent run --company "<name>"` or '
+            '`research-agent run --subject "<title>"`.'
+        )
         return 0
 
     print(
@@ -206,6 +250,39 @@ def _print_conflicts(conflicts: list[Conflict]) -> None:
     for conflict in conflicts:
         values = "; ".join(f"{v.value} ({v.source_url})" for v in conflict.values)
         print(f"  - {conflict.attribute}: {values}")
+
+
+def _eval_command(*, use_judge: bool) -> int:
+    settings = get_settings()
+    engine = make_engine(settings.database_url)
+    session_factory = make_session_factory(engine)
+
+    anthropic_client = None
+    if use_judge:
+        init_tracing(settings)
+        anthropic_client = Anthropic(api_key=settings.anthropic_api_key)
+
+    try:
+        results = run_evals(
+            session_factory=session_factory,
+            anthropic_client=anthropic_client,
+            judge_model=settings.model_smart,
+            use_judge=use_judge,
+        )
+    except AnthropicError as e:
+        print(f"Anthropic API call failed: {e}", file=sys.stderr)
+        print(
+            "(check your API key and billing/credits at console.anthropic.com)",
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        if use_judge:
+            flush_tracing()
+
+    print(f"=== Eval results ({len(results)} golden cases) ===\n")
+    print(render_eval_report(results))
+    return 0
 
 
 if __name__ == "__main__":

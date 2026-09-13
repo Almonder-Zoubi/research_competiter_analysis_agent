@@ -10,19 +10,22 @@ Keep it short. This is a status board, not a diary.
 
 ## Now
 
-**Current milestone:** Day 8 — Observability (Langfuse) + Streamlit dashboard
-  (spec: DAY_8_observability_dashboard.md). Done, except one optional item.
-**Next action:** Days 9–10 — evals + README/writeup (see ROADMAP.md). No
-  spec file written yet. Separately, whenever the user sets up a free
-  Langfuse account and adds real keys to `.env`, confirm a trace actually
-  appears in the Langfuse UI — the code is ready but this can't be verified
-  without an account (not blocking; everything else about Day 8 is done).
+**Current milestone:** Days 9–10 — Evals + polish (spec:
+  DAYS_9_10_evals_and_polish.md). Done, except the demo GIF (needs the
+  user — this environment can't record a screen). That's also the last
+  milestone on the core roadmap before the MVP cutline.
+**Next action:** Nothing blocking. Optional: the user records a short demo
+  GIF for the README; sets up a free Langfuse account to confirm live trace
+  export (Day 8's one open item); reviews and commits the last few
+  sessions' uncommitted work. See ROADMAP.md's "Stretch goals" for optional
+  post-MVP ideas if there's appetite to keep going.
 **Blockers:** none. Anthropic account funded ($5) 2026-09-11.
 **Cost to date:** ~$0.35-0.40 through the deep-research + cited-brief
   diagnostic work (see decision log), plus small routine runs since: Notion
   (run #7, Days 4-5 proof), two Figma runs (#8-9, Days 6-7 proof — the first
-  hit a real bug), and Linear (run #10, Day 8's dashboard-freshness proof).
-  All well under 5¢ each.
+  hit a real bug), Linear (run #10, Day 8's dashboard-freshness proof), and
+  one `research-agent eval --judge` run (Days 9-10, 3 cheap Sonnet calls).
+  Still comfortably under $0.50 total across the whole project.
 **Standing instruction (2026-09-12):** Claude Code no longer commits or
   pushes in this repo — the user reviews and commits everything themselves.
   Work is left staged/unstaged; PROGRESS.md and other docs are still kept
@@ -132,6 +135,45 @@ Keep it short. This is a status board, not a diary.
       dashboard's conflict view. Only remaining item: real Langfuse keys
       (needs the user to set up a free account) to confirm actual trace
       export — not blocking, everything else about this milestone is done.
+- [x] Days 9–10 (Steps 1-4 of 5) — eval harness (spec:
+      DAYS_9_10_evals_and_polish.md). **Key design call**: evaluate
+      retrospectively against the 10 real live runs already in the DB
+      rather than re-running fresh searches — the two core metrics are $0
+      and rerunnable any time. New `evals/` package: `golden_cases.py` (5
+      cases drawn from real stored data, not invented — spans pre- and
+      post-verification runs on purpose: Stripe/harness engineering predate
+      fact extraction, Notion predates the cited brief, Figma/Linear are
+      post-verification); `metrics.py` (pure — `citation_coverage` parses
+      the actual persisted brief text for `[url]` citations against real
+      sources, `fact_recall` checks expected substrings against extracted
+      Fact values); `judge.py` (opt-in LLM-as-judge, MODEL_SMART, same
+      validate+repair-retry pattern as everywhere else, never called by
+      default); `run_eval.py` (orchestration + report rendering). New
+      `research-agent eval [--judge]` subcommand. **Real result, $0, from
+      the actual DB**: citation coverage is exactly 0% on the 3
+      pre-Days-6-7 runs and 100% on the 2 post-verification runs; 100% fact
+      recall on all 3 cases with real facts — the intended before/after
+      story, confirmed with real numbers, not asserted. **Packaging bug,
+      again**: `evals/` wasn't in `pyproject.toml`'s packages list either —
+      same class of bug as `verify/`'s (see decision log) — caught
+      immediately this time by testing the real console script before
+      calling it done, not after. Added a permanent regression test
+      (`tests/test_packaging.py`, diffs the repo's actual `__init__.py`
+      directories against the packages list) so a third package can't
+      repeat this. 115 tests passing (20 new), ruff + mypy green. Portfolio
+      polish (Step 5): README gained a Mermaid architecture diagram
+      (renders natively on GitHub) and an eval-results writeup with the
+      real numbers above. **Confirmed live** with `research-agent eval
+      --judge`: the LLM-judge's groundedness score climbs 1 → 1 → 2 → 4 → 3
+      across the 5 cases in the *same order* as citation coverage's
+      0%→0%→0%→100%→100% — an independent qualitative signal (the judge
+      never sees the citation-coverage metric) confirming the same real
+      improvement. Clarity stayed high (4-5/5) throughout regardless of
+      groundedness — evidence a brief can read well while still being
+      ungrounded, which is why groundedness needed its own metric. Only
+      remaining item: a demo GIF, left to the user (this environment can't
+      record a screen) — not blocking, this was the last milestone on the
+      core roadmap before the MVP cutline.
 
 ## Done (ad hoc, outside milestone sequence)
 
@@ -182,14 +224,28 @@ Keep it short. This is a status board, not a diary.
       Issues section (the €1.9B fraud, EY/KPMG audit failures, executive
       prosecutions, BaFin criticism) — the exact outcome this feature was
       built for. 3-page PDF at `reports/run_6_wirecard.pdf`.
+- [x] `--subject` flag on `run` (user flagged: the only CLI flag was
+      `--company`, which reads oddly for a research field or scientific/
+      technical area — even though the underlying planner has classified
+      subjects as company/field/initiative since the ad hoc planner fix
+      above, and already proved it live on "harness engineering"). Pure CLI
+      UX fix, no changes to `agent/loop.py` or the planner: `--company` and
+      `--subject` are now a mutually exclusive, one-required argparse group
+      that both feed the same `topic: str` parameter (`_run_command` renamed
+      accordingly). Confirmed offline (no live call needed): argparse
+      correctly rejects neither-or-both, and both flags route to
+      `_run_command` with the right topic. 95 tests still passing (no new
+      tests — cli.py has never been unit-tested in this project, and this
+      change doesn't add new underlying behavior worth breaking that
+      convention for), ruff + mypy green.
 
 ## In progress
 
-- [ ] Days 9–10 — evals + README/writeup (flagship polish). No spec file
-      yet — write one first, same pattern as prior milestones. One item
-      outside this milestone remains open: real Langfuse keys (needs the
-      user to set up a free account) to confirm actual trace export from
-      Day 8's tracing work — not blocking, just unverified live.
+Nothing — every milestone on the core roadmap (Day 1 through Days 9-10) is
+done. Two small items remain open, neither blocking, both needing the user
+rather than more coding: real Langfuse keys (a free account) to confirm
+actual trace export from Day 8, and a demo GIF for the README (this
+environment can't record a screen).
 
 ## Upcoming (see ROADMAP.md for detail)
 
@@ -370,3 +426,36 @@ Short record of choices, so they aren't relitigated.
   additional real `streamlit run` + `curl` smoke test still done by hand,
   since `AppTest` runs in "bare mode" and doesn't exercise the actual HTTP
   server path.
+- `--subject` added as a mutually-exclusive alternative to `--company`
+  rather than renaming/replacing `--company` — keeps existing muscle memory
+  and every doc/example that already says `--company` working, while giving
+  research subjects/fields a flag name that doesn't read like the tool only
+  handles companies. No changes needed below the CLI layer: `run_research`/
+  `run_deep_research` already took a generic `topic: str`, and the planner
+  has classified subjects as company/field/initiative since the ad hoc
+  planner fix — this was a naming gap in the CLI, not a capability gap.
+- Eval harness evaluates retrospectively against runs already in the DB
+  instead of re-running fresh searches to build a "clean" eval set — the two
+  core metrics (citation coverage, fact recall) become $0 and rerunnable any
+  time, and scoring 10 real prior live runs is a more honest signal than a
+  handful of newly-run ones anyway (it spans the project's own before/after
+  on verification, deliberately).
+- `citation_coverage` re-parses the actual persisted brief *text* for `[url]`
+  patterns rather than checking internal pipeline state (e.g.
+  `state.conflicts`/pre-filter claim objects) — a real check against the
+  stored artifact, not a tautology confirming the pipeline agrees with
+  itself.
+- Golden cases deliberately include pre-verification runs (Stripe, harness
+  engineering, Notion) expected to score 0% on citation coverage, rather
+  than only including cases we expect to "pass" — an eval suite that only
+  contains wins isn't measuring anything.
+- Second packaging-bug incident (`evals/`, following `verify/`'s): fixed the
+  instance immediately (same one-line fix), but this time also added a
+  permanent regression test rather than relying on remembering the lesson —
+  two incidents of the same class of bug is a pattern, not bad luck, and a
+  memory note alone had already failed to prevent the second occurrence.
+- LLM-judge (`evals/judge.py`) uses MODEL_SMART, not MODEL_FAST — unlike
+  extraction (high-volume, one call per source, cheap model is the right
+  call), judging runs once per golden case, so the cost stays small even
+  with the stronger model, and a qualitative judgment benefits more from a
+  stronger model than a cheap one would.
